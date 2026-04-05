@@ -1,0 +1,13 @@
+RewriteEngine On
+
+# Serve favicon via PHP when no static favicon.ico file exists (avoids 404 on /favicon.ico?v=…)
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteRule ^favicon\.ico$ favicon.php [L,QSA]
+
+# IPMI proxy: /ipmi_proxy.php/{token}/{bmc_path...}
+# Use [END] so Apache does not re-run rewrite on the internal redirect (same path
+# would match again and hit AH00124 / 500 after 10 internal redirects).
+RewriteRule ^ipmi_proxy\.php/(.+)$ /ipmi_proxy.php/$1 [END,QSA]
+
+# WebSocket relay: /ipmi_ws_relay.php?token=...&target=...
+RewriteRule ^ipmi_ws_relay\.php$ /ipmi_ws_relay.php [END,QSA]
