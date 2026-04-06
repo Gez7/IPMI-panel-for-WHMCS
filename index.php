@@ -327,6 +327,25 @@ if ($isAdmin || $isReseller) {
     window.onload = function() {
       refreshAll();
       setInterval(refreshAll, 30000);
+      document.querySelectorAll('a[data-debug-link]').forEach(function (link) {
+        link.addEventListener('click', function (e) {
+          e.preventDefault();
+          var url = link.getAttribute('href');
+          if (url) {
+            window.open(url, '_blank', 'noopener');
+          }
+          var banner = document.getElementById('ipmi-debug-banner');
+          if (banner) {
+            var name = link.getAttribute('data-server-name') || 'this server';
+            var title = banner.querySelector('[data-debug-title]');
+            if (title) {
+              title.textContent = 'Debug mode opened for ' + name + '.';
+            }
+            banner.removeAttribute('hidden');
+            banner.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          }
+        });
+      });
     };
   </script>
   <script src="/assets/ipmi-row-actions.js" defer></script>
@@ -340,6 +359,13 @@ $ipmiLogoutHref = '?logout=1';
 require __DIR__ . '/inc/panel_header.php';
 ?>
 <main class="ipmi-main">
+  <section id="ipmi-debug-banner" class="ipmi-card" hidden style="margin-bottom:16px;">
+    <h3 data-debug-title style="margin:0 0 6px;">Debug mode opened.</h3>
+    <p style="margin:0 0 8px;opacity:.85;">
+      In the new tab, open DevTools → Console and copy the object called <strong>IPMI Proxy debug</strong>.
+      You can also run <code>copy(window.IPMI_PROXY_DEBUG)</code>.
+    </p>
+  </section>
   <div class="table-container ipmi-data-table">
     <table>
       <thead>
@@ -377,6 +403,7 @@ require __DIR__ . '/inc/panel_header.php';
 
           $id = (int) $s['id'];
           $sessionHref = '/ipmi_session.php?id=' . $id . '&csrf_token=' . rawurlencode($csrfToken);
+          $sessionDebugHref = $sessionHref . '&debug=1';
           $kvmHref = '/ipmi_kvm.php?id=' . $id . '&csrf_token=' . rawurlencode($csrfToken);
         ?>
         <tr>
@@ -405,6 +432,7 @@ require __DIR__ . '/inc/panel_header.php';
               <span class="btn-kvm" style="opacity:.55;cursor:not-allowed;">Blocked</span>
             <?php else: ?>
               <a href="<?= htmlspecialchars($sessionHref, ENT_QUOTES, 'UTF-8') ?>" target="_blank" class="btn-kvm">Open</a>
+              <a href="<?= htmlspecialchars($sessionDebugHref, ENT_QUOTES, 'UTF-8') ?>" target="_blank" class="btn-kvm" style="margin-left:6px;" data-debug-link data-server-name="<?= htmlspecialchars((string) ($s['server_name'] ?? ''), ENT_QUOTES, 'UTF-8') ?>">Debug</a>
             <?php endif; ?>
           </td>
           <td>

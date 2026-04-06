@@ -108,6 +108,10 @@ function ipmiProxyRewriteIloRootRelative(string $body, string $token): string
     $px = '/ipmi_proxy.php/' . rawurlencode($token);
     $pxj = str_replace('/', '\\/', $px);
     $roots = [
+        '/cgi/',
+        '/res/',
+        '/resources/',
+        '/static/',
         '/redfish/v1/',
         '/redfish/',
         '/rest/v1/',
@@ -236,6 +240,9 @@ function ipmiProxyInjectIloHeadFixes(string $html, string $token, ?string $redfi
         . '}catch(e){}return new OW(u,p);};}'
         . 'if(window.EventSource){var OES=EventSource;window.EventSource=function(u,c){try{if(typeof u==="string")u=fu(u);}catch(e6){}return new OES(u,c);};'
         . 'try{window.EventSource.prototype=OES.prototype;}catch(e7){}}'
+        . 'try{if(typeof A==="string"){var dc=String(document.cookie||"");'
+        . 'var hasAuth=/(?:^|;\\s*)(session|sessionKey|QSESSIONID)=/i.test(dc);'
+        . 'if(hasAuth&&String(location.hash||"").toLowerCase()==="#login"){location.hash="#/dashboard";}}}catch(e8){}'
         . '})();</script>'
         . '<script data-ipmi-proxy-ilo-patch="1">'
         . '(function(){'
@@ -243,18 +250,18 @@ function ipmiProxyInjectIloHeadFixes(string $html, string $token, ?string $redfi
         . 'function key(u){try{return String(u).split("?")[0];}catch(e){return"";}}'
         . 'function install(){var jq=window.jQuery||window.$;if(!jq||!jq.ajax||jq.ajax.__ipmiProxyAjaxBackoff)return;'
         . 'var oa=jq.ajax;var st={};'
-        . 'var w=function(a,b){'
-        . 'var opts=(typeof a==="object"&&a!==null)?jq.extend(true,{},a):jq.extend(true,{},b||{},{url:a});'
-        . 'var u=opts.url||"";if(!sens(u))return oa.apply(this,arguments);'
-        . 'var k=key(u)||u;var slot=st[k]||(st[k]={cf:0,next:0});var now=Date.now();var wait=slot.next>now?slot.next-now:0;'
+        . 'var w=function(a,b){var callArgs=arguments;'
+        . 'var opts=(typeof a==="object"&&a!==null)?a:(b||{url:a});'
+        . 'var u=(opts&&opts.url)||"";if(!sens(u))return oa.apply(this,callArgs);'
+        . 'var k=key(u)||String(u||"");var slot=st[k]||(st[k]={cf:0,next:0});var now=Date.now();var wait=slot.next>now?slot.next-now:0;'
         . 'function arm(xhr){if(!xhr||!xhr.done||!xhr.fail)return;'
         . 'xhr.done(function(){slot.cf=0;slot.next=0;});'
         . 'xhr.fail(function(xhrObj,ts){if(ts==="abort")return;'
         . 'var bad=!xhrObj||xhrObj.status>=400||ts==="error"||ts==="timeout";'
         . 'if(bad){slot.cf=slot.cf<8?slot.cf+1:8;slot.next=Date.now()+Math.min(3e4,1e3*Math.pow(2,slot.cf));}});}'
-        . 'if(wait>0){var d=jq.Deferred();var tid=setTimeout(function(){var x=oa.call(jq,opts);arm(x);if(x&&x.done)x.done(d.resolve).fail(d.reject);else try{d.reject();}catch(e){}},wait);'
+        . 'if(wait>0){var d=jq.Deferred();var self=this;var tid=setTimeout(function(){var x=oa.apply(self,callArgs);arm(x);if(x&&x.done)x.done(d.resolve).fail(d.reject);else try{d.reject();}catch(e){}},wait);'
         . 'var p=d.promise();try{p.abort=function(){clearTimeout(tid);};}catch(e){}return p;}'
-        . 'var x=oa.call(jq,opts);arm(x);return x;};w.__ipmiProxyAjaxBackoff=true;jq.ajax=w;}'
+        . 'var x=oa.apply(this,callArgs);arm(x);return x;};w.__ipmiProxyAjaxBackoff=true;jq.ajax=w;}'
         . 'install();var n=0;var t=setInterval(function(){install();if(++n>=40)clearInterval(t);},250);'
         . '})();</script>';
 
@@ -292,7 +299,9 @@ function ipmiProxyRewriteBmcResponseBody(string $body, string $bmcIp, string $to
 
     // Root-relative rewrites: do NOT key off '"/js/' for JS bundles — jquery.min.js often contains that
     // substring. iLO HTML pages are small: always rewrite root-relative paths when vendor is iLO.
-    $needsIloRoot = ($isHtml && ipmiProxyIsIloFamily($bmcType))
+    // Supermicro/ASRockRack also depend on root-relative /cgi/ and /res/ assets.
+    $typeNorm = ipmiWebNormalizeBmcType((string) $bmcType);
+    $needsIloRoot = ($isHtml && (ipmiProxyIsIloFamily($bmcType) || $typeNorm === 'supermicro'))
         || strpos($body, '"/redfish/') !== false
         || strpos($body, "'/redfish/") !== false
         || strpos($body, '"/rest/') !== false
@@ -300,6 +309,12 @@ function ipmiProxyRewriteBmcResponseBody(string $body, string $bmcIp, string $to
         || strpos($body, '"\\/rest\\/') !== false
         || strpos($body, '"/sse/') !== false
         || strpos($body, '"\\/sse\\/') !== false
+        || strpos($body, '"/cgi/') !== false
+        || strpos($body, "'/cgi/") !== false
+        || strpos($body, '"\\/cgi\\/') !== false
+        || strpos($body, '"/res/') !== false
+        || strpos($body, "'/res/") !== false
+        || strpos($body, '"\\/res\\/') !== false
         || strpos($body, '"/json/') !== false
         || strpos($body, '"\\/json\\/') !== false
         || strpos($body, '"/api/') !== false
@@ -396,23 +411,53 @@ if (preg_match('#^/ipmi_proxy\.php/([a-f0-9]{64})$#i', $reqPath)) {
 }
 
 $pathInfo = $_SERVER['PATH_INFO'] ?? '';
-if ($pathInfo === '' && isset($_SERVER['REQUEST_URI'])) {
-    $uri = (string)$_SERVER['REQUEST_URI'];
+$pathAfterPrefixFromUri = '';
+if (isset($_SERVER['REQUEST_URI'])) {
+    $uriPathOnly = (string) parse_url((string) $_SERVER['REQUEST_URI'], PHP_URL_PATH);
     $prefix = '/ipmi_proxy.php';
-    $pos = strpos($uri, $prefix);
+    $pos = strpos($uriPathOnly, $prefix);
     if ($pos !== false) {
-        $pathInfo = substr($uri, $pos + strlen($prefix));
-        $qpos = strpos($pathInfo, '?');
-        if ($qpos !== false) {
-            $pathInfo = substr($pathInfo, 0, $qpos);
-        }
+        $pathAfterPrefixFromUri = (string) substr($uriPathOnly, $pos + strlen($prefix));
     }
+}
+if ($pathInfo === '' && $pathAfterPrefixFromUri !== '') {
+    $pathInfo = $pathAfterPrefixFromUri;
 }
 
 $pathInfo = '/' . ltrim((string)$pathInfo, '/');
 $parts = explode('/', ltrim($pathInfo, '/'), 2);
 $token = strtolower(trim((string)($parts[0] ?? '')));
 $bmcPath = '/' . ltrim((string)($parts[1] ?? ''), '/');
+
+// Some vendor UIs resolve assets to /ipmi_proxy.php/images/... (missing token).
+// Recover the token from same-origin Referer when possible.
+$tokenRecoveredFromReferer = false;
+if (!preg_match('/^[a-f0-9]{64}$/', $token)) {
+    $ref = (string)($_SERVER['HTTP_REFERER'] ?? '');
+    if ($ref !== '') {
+        $refParts = parse_url($ref);
+        $refHost = strtolower((string)($refParts['host'] ?? ''));
+        $selfHost = strtolower((string)($_SERVER['HTTP_HOST'] ?? ''));
+        if ($refHost !== '' && $selfHost !== '' && $refHost === $selfHost) {
+            $refPath = (string)($refParts['path'] ?? '');
+            if (preg_match('#/ipmi_proxy\.php/([a-f0-9]{64})#i', $refPath, $m)) {
+                $token = strtolower($m[1]);
+                $tokenRecoveredFromReferer = true;
+            }
+        }
+    }
+}
+if ($tokenRecoveredFromReferer) {
+    // When request URL is like /ipmi_proxy.php/js/... (missing token), don't drop the first segment ("js").
+    // Keep the full path after /ipmi_proxy.php as BMC path.
+    $rawCandidate = $pathAfterPrefixFromUri !== '' ? $pathAfterPrefixFromUri : $pathInfo;
+    $rawCandidate = '/' . ltrim((string) $rawCandidate, '/');
+    if ($rawCandidate !== '/' && !preg_match('#^/[a-f0-9]{64}(?:/|$)#i', $rawCandidate)) {
+        $bmcPath = $rawCandidate;
+    } elseif ($bmcPath === '/' && $pathInfo !== '/' && $pathInfo !== '') {
+        $bmcPath = '/' . ltrim((string) $pathInfo, '/');
+    }
+}
 
 if (!preg_match('/^[a-f0-9]{64}$/', $token)) {
     http_response_code(400);
@@ -435,15 +480,20 @@ if (ipmiProxyDebugEnabled()) {
 $bmcIp = $session['ipmi_ip'];
 $tokenPrefix = '/ipmi_proxy.php/' . rawurlencode($token);
 
-if (ipmiWebNeedsAutoLogin($session)) {
-    if (ipmiWebAttemptAutoLogin($session)) {
-        ipmiWebSaveSessionCookies(
-            $mysqli,
-            $token,
-            $session['cookies'],
-            is_array($session['forward_headers'] ?? null) ? $session['forward_headers'] : [],
-            (string)($session['bmc_scheme'] ?? 'https')
-        );
+// For Supermicro/ASRockRack, landing on "/" often shows the login shell even with a valid session.
+// Redirect root requests to topmenu so the dashboard frame loads immediately.
+$typeNorm = ipmiWebNormalizeBmcType((string) ($session['bmc_type'] ?? 'generic'));
+$earlyQuery = ipmiProxyDebugStripFromQuery((string) ($_SERVER['QUERY_STRING'] ?? ''));
+if ($typeNorm === 'supermicro') {
+    $rootPath = trim($bmcPath) === '' ? '/' : $bmcPath;
+    $methodEarly = strtoupper((string) ($_SERVER['REQUEST_METHOD'] ?? 'GET'));
+    if ($methodEarly === 'GET' && $rootPath === '/') {
+        $redir = $tokenPrefix . '/cgi/url_redirect.cgi?url_name=topmenu';
+        if ($earlyQuery !== '') {
+            $redir .= '&' . $earlyQuery;
+        }
+        header('Location: ' . $redir, true, 302);
+        exit;
     }
 }
 
@@ -505,22 +555,147 @@ if (ipmiProxyDebugEnabled()) {
     ]);
 }
 
+function ipmiProxyIsHealthPollPath(string $bmcPath): bool
+{
+    $p = strtolower($bmcPath);
+
+    return str_contains($p, '/json/health') || str_contains($p, 'health_summary');
+}
+
+function ipmiProxyBodyHasSessionTimeout(string $body): bool
+{
+    if ($body === '') {
+        return false;
+    }
+    if (ipmiProxyBodyLooksLikeSupermicroTopmenuAuthed($body)) {
+        return false;
+    }
+    $snippet = strtolower(substr($body, 0, 200000));
+    return strpos($snippet, 'session has timed out') !== false
+        || strpos($snippet, 'session timed out') !== false
+        || strpos($snippet, 'session has expired') !== false
+        || strpos($snippet, 'session expired') !== false
+        || strpos($snippet, 'open a new session') !== false;
+}
+
+function ipmiProxyBodyLooksLikeSupermicroTopmenuAuthed(string $body): bool
+{
+    if ($body === '') {
+        return false;
+    }
+    $l = strtolower(substr($body, 0, 200000));
+    if ($l === '') {
+        return false;
+    }
+
+    $hits = 0;
+    if (strpos($l, 'lang_topmenu_greeting') !== false) {
+        $hits++;
+    }
+    if (strpos($l, 'id="refreshid"') !== false || strpos($l, "id='refreshid'") !== false) {
+        $hits++;
+    }
+    if (strpos($l, "sessionstorage.setitem ('_x_auth'") !== false
+        || strpos($l, 'sessionstorage.setitem("_x_auth"') !== false) {
+        $hits++;
+    }
+    if (strpos($l, 'new redfish (null, session_id)') !== false) {
+        $hits++;
+    }
+
+    return $hits >= 2;
+}
+
+function ipmiProxyBodyLooksLikeSupermicroTimeoutShell(string $body): bool
+{
+    if ($body === '') {
+        return false;
+    }
+    if (ipmiProxyBodyLooksLikeSupermicroTopmenuAuthed($body)) {
+        return false;
+    }
+    $l = strtolower(substr($body, 0, 120000));
+    if ($l === '') {
+        return false;
+    }
+    $hasLogoutFn = strpos($l, 'logout_alert') !== false;
+    $hasSessionTimeoutCall = strpos($l, 'sessiontimeout()') !== false
+        || strpos($l, 'sessiontimeout ();') !== false;
+    $hasReadyHook = strpos($l, 'document).ready') !== false || strpos($l, 'jquery(document).ready') !== false;
+
+    return $hasLogoutFn && $hasSessionTimeoutCall && $hasReadyHook;
+}
+
+function ipmiProxyLooksLikeLoginPath(string $bmcPath): bool
+{
+    $p = strtolower((string) parse_url($bmcPath, PHP_URL_PATH));
+    return $p === '/login' || $p === '/login.html' || $p === '/signin' || $p === '/signin.html';
+}
+
+function ipmiProxyPostAuthLandingPath(string $bmcType): string
+{
+    $type = ipmiWebNormalizeBmcType((string) $bmcType);
+    if ($type === 'supermicro') {
+        return '/cgi/url_redirect.cgi?url_name=topmenu';
+    }
+    if ($type === 'idrac') {
+        return '/restgui/start.html';
+    }
+    if ($type === 'ami') {
+        return '/html/application.html';
+    }
+    return '/';
+}
+
+function ipmiProxyEmitSessionExpiredPage(string $tokenPrefix, string $message = ''): void
+{
+    $msg = trim($message) !== '' ? $message : 'Your BMC web session has timed out. Open a new session from the panel.';
+    http_response_code(403);
+    header('Content-Type: text/html; charset=utf-8');
+    header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
+    header('Pragma: no-cache');
+    $safeMsg = htmlspecialchars($msg, ENT_QUOTES, 'UTF-8');
+    $back = htmlspecialchars('/index.php', ENT_QUOTES, 'UTF-8');
+    $open = htmlspecialchars('/ipmi_session.php', ENT_QUOTES, 'UTF-8');
+    echo '<!doctype html><html><head><meta charset="utf-8"><title>IPMI Session Expired</title>'
+        . '<style>body{font-family:Arial,sans-serif;background:#0b1630;color:#dce6ff;margin:0;padding:28px}'
+        . '.card{max-width:760px;margin:30px auto;background:#1b2a47;border-radius:10px;padding:24px;border:1px solid #2b3d60}'
+        . 'a{color:#7fc0ff} .btn{display:inline-block;margin-right:10px;margin-top:14px;padding:10px 14px;'
+        . 'border-radius:7px;background:#22477a;color:#fff;text-decoration:none}</style></head><body>'
+        . '<div class="card"><h2 style="margin-top:0">IPMI Session Expired</h2><p>' . $safeMsg . '</p>'
+        . '<a class="btn" href="' . $open . '">Open New Session</a>'
+        . '<a class="btn" href="' . $back . '">Back to panel</a></div></body></html>';
+    exit;
+}
+
+function ipmiProxyIsBmcStaticAssetPath(string $bmcPath): bool
+{
+    $p = strtolower((string) parse_url($bmcPath, PHP_URL_PATH));
+    if ($p === '') {
+        return false;
+    }
+    foreach (['/js/', '/css/', '/fonts/', '/themes/', '/img/', '/images/'] as $prefix) {
+        if (str_contains($p, $prefix)) {
+            return true;
+        }
+    }
+
+    return (bool) preg_match('/\.(?:js|css|png|svg|jpg|jpeg|gif|webp|ico|woff2?|ttf|eot|map)$/', $p);
+}
+
 /**
  * Per-URL cURL total timeout for buffered ipmiProxyExecute (non-streaming GET/POST).
- * GET /json/health* and health_summary use streaming (infinite timeout there); this still
- * applies if a request falls through to execute (e.g. non-GET) or legacy paths.
  */
 function ipmiProxyCurlTimeoutForBmcUrl(string $bmcUrl): int
 {
     $path = strtolower((string) (parse_url($bmcUrl, PHP_URL_PATH) ?? ''));
+    // Health poll endpoints are very chatty on iLO; keep timeout bounded to avoid worker starvation.
     if (str_contains($path, '/json/health') || str_contains($path, 'health_summary')) {
-        return 0;
+        return 25;
     }
-    // Static bundles can be large; slow BMC or TLS handshake should not abort before PHP has the full body.
-    foreach (['/js/', '/css/', '/fonts/', '/themes/', '/img/', '/images/'] as $prefix) {
-        if (str_contains($path, $prefix)) {
-            return 120;
-        }
+    // Keep static assets under common FastCGI/proxy timeouts to avoid 502 before PHP responds.
+    if (ipmiProxyIsBmcStaticAssetPath($path)) {
+        return 20;
     }
 
     return 60;
@@ -528,19 +703,12 @@ function ipmiProxyCurlTimeoutForBmcUrl(string $bmcUrl): int
 
 /**
  * Paths that must be streamed (bytes forwarded as they arrive), not buffered in PHP.
- *
- * - SSE / event-stream.
- * - iLO /json/health* and health_summary often long-poll: buffering with CURLOPT_RETURNTRANSFER
- *   holds the connection until the BMC responds → no bytes to nginx for a long time → 502 Bad Gateway
- *   at default proxy/fastcgi timeouts. Streaming sends chunks as the BMC sends them.
+ * Only true SSE/event-stream endpoints are streamed.
  */
 function ipmiProxyIsBmcLongPollOrStreamPath(string $bmcPath): bool
 {
     $p = strtolower($bmcPath);
     if (str_starts_with($p, '/sse/') || str_contains($p, 'event_stream') || str_contains($p, 'eventstream')) {
-        return true;
-    }
-    if (str_contains($p, '/json/health') || str_contains($p, 'health_summary')) {
         return true;
     }
     $acc = strtolower((string) ($_SERVER['HTTP_ACCEPT'] ?? ''));
@@ -718,9 +886,8 @@ function ipmiProxyMergeClientBmcForwardHeaders(array $forwardHeaders, string $bm
 /**
  * Sync Origin / X-Auth-Token for streamed BMC requests.
  *
- * We no longer probe /json/session_info before SSE or health streams: that extra cURL round-trip
- * sent no bytes to Apache until it finished (up to the probe timeout) → FastCGI/proxy 502 on busy
- * iLO UIs. Auth recovery is handled inside ipmiProxyStreamGetBmcResponse (401/403 → relogin → retry).
+ * We intentionally do not perform runtime re-login in the proxy request path.
+ * If BMC auth is stale, caller returns a session-expired response and user opens a new session.
  */
 function ipmiProxyRecoverBmcAuthBeforeSse(array &$session, string $bmcIp, string &$bmcScheme, array &$fwdHdr): void
 {
@@ -745,9 +912,95 @@ function ipmiProxyShouldStreamBmcRequest(string $method, string $bmcPath): bool
     return ipmiProxyIsBmcLongPollOrStreamPath($bmcPath);
 }
 
+function ipmiProxyEmitHealthPollFallbackJson(): void
+{
+    http_response_code(200);
+    header('Content-Type: application/json; charset=utf-8');
+    header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
+    header('Pragma: no-cache');
+    echo '{}';
+}
+
+function ipmiProxyEmitSseRetryHint(): void
+{
+    http_response_code(200);
+    header('Content-Type: text/event-stream');
+    header('Cache-Control: no-cache');
+    header('X-Accel-Buffering: no');
+    echo "retry: 5000\n\n";
+    if (ob_get_level() > 0) {
+        @ob_flush();
+    }
+    flush();
+}
+
 /**
- * Stream SSE or long-poll JSON from the BMC. Aborts before sending bytes if status is 401/403
- * so the caller can relogin (non-stream requests already had this; streaming did not).
+ * For static asset transport failures, avoid hard 502 responses that break the whole BMC UI shell.
+ * We only provide safe fallbacks for non-executable assets (css/fonts/images), never JS.
+ */
+function ipmiProxyTryEmitStaticFallback(string $bmcPath): bool
+{
+    $path = strtolower((string) parse_url($bmcPath, PHP_URL_PATH));
+    if ($path === '') {
+        return false;
+    }
+    $ext = strtolower((string) pathinfo($path, PATHINFO_EXTENSION));
+    if ($ext === '') {
+        return false;
+    }
+
+    // Fonts/maps: no-content is acceptable and avoids noisy 502s.
+    if (in_array($ext, ['woff', 'woff2', 'ttf', 'eot', 'otf', 'map'], true)) {
+        http_response_code(204);
+        header('Cache-Control: private, max-age=120');
+        return true;
+    }
+
+    if ($ext === 'css') {
+        http_response_code(200);
+        header('Content-Type: text/css; charset=utf-8');
+        header('Cache-Control: private, max-age=120');
+        echo "/* ipmi-proxy fallback css: upstream asset unavailable */\n";
+        return true;
+    }
+
+    if ($ext === 'svg') {
+        http_response_code(200);
+        header('Content-Type: image/svg+xml; charset=utf-8');
+        header('Cache-Control: private, max-age=120');
+        echo '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"></svg>';
+        return true;
+    }
+
+    if (in_array($ext, ['png', 'gif', 'webp'], true)) {
+        http_response_code(200);
+        header('Content-Type: image/png');
+        header('Cache-Control: private, max-age=120');
+        // 1x1 transparent PNG
+        echo base64_decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR4nGNgYAAAAAMAASsJTYQAAAAASUVORK5CYII=');
+        return true;
+    }
+
+    if (in_array($ext, ['jpg', 'jpeg'], true)) {
+        http_response_code(200);
+        header('Content-Type: image/jpeg');
+        header('Cache-Control: private, max-age=120');
+        // 1x1 white JPEG
+        echo base64_decode('/9j/4AAQSkZJRgABAQAAAQABAAD/2wCEAAkGBxAQEBAQEA8PEA8QDw8PDw8PDw8QEA8QFREWFhURFRUYHSggGBolGxUVITEhJSkrLi4uFx8zODMsNygtLisBCgoKDQ0NFQ8PFSsdFR0rKysrKysrKysrKysrKysrKysrKysrKysrKysrKysrKysrKysrKysrKysrKysrK//AABEIAAEAAQMBIgACEQEDEQH/xAAXAAEBAQEAAAAAAAAAAAAAAAAAAQID/8QAFhEBAQEAAAAAAAAAAAAAAAAAAAER/9oADAMBAAIQAxAAAAHkAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP/Z');
+        return true;
+    }
+
+    if ($ext === 'ico') {
+        http_response_code(204);
+        header('Cache-Control: private, max-age=120');
+        return true;
+    }
+
+    return false;
+}
+
+/**
+ * Stream SSE or long-poll JSON from the BMC. Aborts before sending bytes if status is 401/403.
  *
  * @return array{ok: bool, auth_rejected: bool, applied_resolve: bool, curl_errno?: int, curl_error?: string}
  */
@@ -894,9 +1147,14 @@ function ipmiProxyStreamGetBmcResponse(string $bmcUrl, array $cookies, array $fo
  * Overlay Cookie header from the browser for keys we already store (mirrored BMC cookies).
  * Keeps client and server jars aligned after Set-Cookie mirror.
  */
-function ipmiProxyMergeClientBmcCookies(array $dbCookies): array
+function ipmiProxyMergeClientBmcCookies(array $dbCookies, string $bmcType = ''): array
 {
     if ($dbCookies === []) {
+        return $dbCookies;
+    }
+    $typeNorm = ipmiWebNormalizeBmcType((string) $bmcType);
+    if ($typeNorm === 'supermicro') {
+        // Supermicro/ASRockRack sessions are sensitive; never let client cookies overwrite server jar.
         return $dbCookies;
     }
     $raw = (string)($_SERVER['HTTP_COOKIE'] ?? '');
@@ -922,7 +1180,10 @@ function ipmiProxyMergeClientBmcCookies(array $dbCookies): array
             continue;
         }
         if (array_key_exists($name, $out)) {
-            $out[$name] = $value;
+            // Only override if server-side cookie is missing/invalid.
+            if (!ipmiWebIsAuthValueUsable($out[$name])) {
+                $out[$name] = $value;
+            }
         }
     }
 
@@ -930,7 +1191,7 @@ function ipmiProxyMergeClientBmcCookies(array $dbCookies): array
 }
 
 if (is_array($session['cookies'])) {
-    $session['cookies'] = ipmiProxyMergeClientBmcCookies($session['cookies']);
+    $session['cookies'] = ipmiProxyMergeClientBmcCookies($session['cookies'], (string) ($session['bmc_type'] ?? ''));
     if (ipmiWebIsIloFamilyType((string)($session['bmc_type'] ?? ''))) {
         ipmiWebSyncIloSessionAndSessionKeyCookies($session['cookies']);
     }
@@ -977,37 +1238,6 @@ if ($method === 'GET' && ipmiProxyShouldStreamBmcRequest($method, $bmcPath)) {
         false
     );
 
-    if ($r['auth_rejected']) {
-        $session['cookies'] = [];
-        $session['forward_headers'] = [];
-        if (ipmiWebAttemptAutoLogin($session)) {
-            ipmiWebSaveSessionCookies(
-                $mysqli,
-                $token,
-                $session['cookies'],
-                is_array($session['forward_headers'] ?? null) ? $session['forward_headers'] : [],
-                (string) ($session['bmc_scheme'] ?? 'https')
-            );
-            $bmcScheme = (($session['bmc_scheme'] ?? 'https') === 'http') ? 'http' : 'https';
-            $streamUrl = $bmcScheme . '://' . $bmcIp . $bmcPath;
-            if ($queryString !== '') {
-                $streamUrl .= '?' . $queryString;
-            }
-            $fwdHdr = ipmiProxyMergeClientBmcForwardHeaders(
-                is_array($session['forward_headers'] ?? null) ? $session['forward_headers'] : [],
-                $bmcScheme,
-                $bmcIp
-            );
-            $r = ipmiProxyStreamGetBmcResponse(
-                $streamUrl,
-                $session['cookies'],
-                is_array($fwdHdr) ? $fwdHdr : [],
-                $bmcIp,
-                false
-            );
-        }
-    }
-
     if (!$r['ok'] && !empty($r['applied_resolve'])) {
         $r = ipmiProxyStreamGetBmcResponse(
             $streamUrl,
@@ -1035,8 +1265,11 @@ if ($method === 'GET' && ipmiProxyShouldStreamBmcRequest($method, $bmcPath)) {
             ]);
         }
         if (!empty($r['auth_rejected'])) {
-            http_response_code(403);
-            echo 'BMC denied this request (session may have expired). Refresh the page to re-authenticate.';
+            ipmiProxyEmitSessionExpiredPage($tokenPrefix, 'BMC denied this request because the session expired. Open a new session from the panel.');
+        } elseif (ipmiProxyIsHealthPollPath($bmcPath)) {
+            ipmiProxyEmitHealthPollFallbackJson();
+        } elseif (str_starts_with(strtolower($bmcPath), '/sse/')) {
+            ipmiProxyEmitSseRetryHint();
         } else {
             http_response_code(502);
             echo 'BMC unreachable';
@@ -1047,6 +1280,23 @@ if ($method === 'GET' && ipmiProxyShouldStreamBmcRequest($method, $bmcPath)) {
 
 $result = ipmiProxyExecute($bmcUrl, $method, $postBody, $fwdContentType, $session['cookies'], is_array($fwdHdr) ? $fwdHdr : [], $bmcIp);
 
+// Core JS/CSS/image assets must be resilient. If transport failed, retry once.
+if ($result['raw'] === false && $method === 'GET' && ipmiProxyIsBmcStaticAssetPath($bmcPath)) {
+        $retryAsset = ipmiProxyExecute(
+        $bmcUrl,
+        $method,
+        $postBody,
+        $fwdContentType,
+        $session['cookies'],
+        is_array($fwdHdr) ? $fwdHdr : [],
+        $bmcIp,
+        20
+    );
+    if ($retryAsset['raw'] !== false) {
+        $result = $retryAsset;
+    }
+}
+
 if ($result['raw'] === false) {
     if (ipmiProxyDebugEnabled()) {
         ipmiProxyDebugLog('curl_failed', ['trace' => $ipmiTraceId, 'bmcPath' => $bmcPath, 'method' => $method]);
@@ -1055,6 +1305,27 @@ if ($result['raw'] === false) {
             'bmcPath' => $bmcPath,
             'phase'   => 'curl_failed',
         ]);
+    }
+    if ($method === 'GET' && ipmiProxyIsBmcStaticAssetPath($bmcPath)) {
+        if (ipmiProxyDebugEnabled()) {
+            ipmiProxyDebugLog('static_asset_fallback', [
+                'trace'   => $ipmiTraceId,
+                'bmcPath' => $bmcPath,
+                'reason'  => 'curl_failed',
+            ]);
+            ipmiProxyDebugEmitLogHeader([
+                'trace'   => $ipmiTraceId,
+                'bmcPath' => $bmcPath,
+                'phase'   => 'static_fallback',
+            ]);
+        }
+        if (ipmiProxyTryEmitStaticFallback($bmcPath)) {
+            exit;
+        }
+    }
+    if (ipmiProxyIsHealthPollPath($bmcPath)) {
+        ipmiProxyEmitHealthPollFallbackJson();
+        exit;
     }
     http_response_code(502);
     echo 'BMC unreachable';
@@ -1077,124 +1348,139 @@ if (!empty($newCookies)) {
         is_array($session['forward_headers'] ?? null) ? $session['forward_headers'] : [],
         (string)($session['bmc_scheme'] ?? 'https')
     );
+    if (ipmiWebHasUsableBmcAuth($session['cookies'], is_array($session['forward_headers'] ?? null) ? $session['forward_headers'] : [])) {
+        ipmiWebEmitMirroredBmcCookiesForProxy($token, $session['cookies']);
+    }
 }
 
-if ($httpCode === 401 || $httpCode === 403) {
-    $session['cookies'] = [];
-    $session['forward_headers'] = [];
-    $recovered = ipmiWebAttemptAutoLogin($session);
-    if ($recovered) {
-        ipmiWebSaveSessionCookies(
-            $mysqli,
-            $token,
-            $session['cookies'],
-            is_array($session['forward_headers'] ?? null) ? $session['forward_headers'] : [],
-            (string)($session['bmc_scheme'] ?? 'https')
-        );
-
-        $bmcScheme = (($session['bmc_scheme'] ?? 'https') === 'http') ? 'http' : 'https';
-        $bmcUrl = $bmcScheme . '://' . $bmcIp . $bmcPath;
-        if ($queryString !== '') {
-            $bmcUrl .= '?' . $queryString;
-        }
-
-        $fh = ipmiProxyMergeClientBmcForwardHeaders(
-            is_array($session['forward_headers'] ?? null) ? $session['forward_headers'] : [],
-            $bmcScheme,
-            $bmcIp
-        );
-        $retry = ipmiProxyExecute(
-            $bmcUrl,
-            $method,
-            $postBody,
-            $fwdContentType,
-            $session['cookies'],
-            $fh,
-            $bmcIp
-        );
-        if ($retry['raw'] !== false && $retry['http_code'] >= 200 && $retry['http_code'] < 400) {
-            $rawResponse = $retry['raw'];
-            $httpCode = $retry['http_code'];
-            $contentTypeResp = $retry['content_type'];
-
-            [, $responseBody] = ipmiWebCurlExtractFinalHeadersAndBody($rawResponse);
-            $retryChainCookies = ipmiWebCurlMergeSetCookiesFromChain($rawResponse, []);
-            if (!empty($retryChainCookies)) {
-                $session['cookies'] = array_merge($session['cookies'], $retryChainCookies);
-                ipmiWebSaveSessionCookies(
-                    $mysqli,
-                    $token,
+// ASRockRack/Supermicro UI sometimes references banner images with relative paths that resolve to
+// /cgi/*.png (404). Retry known asset directories when a small image returns 404.
+if ($method === 'GET' && ($httpCode === 404 || $httpCode === 400) && ipmiProxyIsBmcStaticAssetPath($bmcPath)) {
+    $pathOnly = (string) parse_url($bmcPath, PHP_URL_PATH);
+    $file = basename($pathOnly);
+    $dir = dirname(str_replace('\\', '/', $pathOnly));
+    $dir = $dir === '.' ? '/' : $dir;
+    $isH5Banner = (bool)preg_match('/^h5banner_(left|right)\\.png$/i', $file);
+    if ($isH5Banner
+        || ($dir === '/' && preg_match('/\\.(?:png|jpg|jpeg|gif|svg)$/i', $file))
+        || (preg_match('/\\/(?:res|resources|assets)(?:\\/oem)?\\/?$/i', $dir) && preg_match('/\\.(?:png|jpg|jpeg|gif|svg)$/i', $file))) {
+        $candidates = [
+            '/images/' . $file,
+            '/img/' . $file,
+            '/resources/' . $file,
+            '/res/' . $file,
+            '/res/oem/' . $file,
+            '/oem/' . $file,
+            '/assets/' . $file,
+            '/static/' . $file,
+        ];
+        foreach ($candidates as $altPath) {
+            $altUrl = $bmcScheme . '://' . $bmcIp . $altPath;
+            $alt = ipmiProxyExecute(
+                $altUrl,
+                $method,
+                $postBody,
+                $fwdContentType,
+                $session['cookies'],
+                is_array($fwdHdr) ? $fwdHdr : [],
+                $bmcIp,
+                12
+            );
+            if ($alt['raw'] === false && $bmcScheme === 'https') {
+                $altUrl = 'http://' . $bmcIp . $altPath;
+                $alt = ipmiProxyExecute(
+                    $altUrl,
+                    $method,
+                    $postBody,
+                    $fwdContentType,
                     $session['cookies'],
-                    is_array($session['forward_headers'] ?? null) ? $session['forward_headers'] : [],
-                    (string)($session['bmc_scheme'] ?? 'https')
+                    is_array($fwdHdr) ? $fwdHdr : [],
+                    $bmcIp,
+                    12
                 );
             }
+            if ($alt['raw'] !== false && $alt['http_code'] >= 200 && $alt['http_code'] < 400) {
+                $rawResponse = $alt['raw'];
+                $httpCode = $alt['http_code'];
+                $contentTypeResp = $alt['content_type'];
+                [, $responseBody] = ipmiWebCurlExtractFinalHeadersAndBody($rawResponse);
+                $altCookies = ipmiWebCurlMergeSetCookiesFromChain($rawResponse, []);
+                if (!empty($altCookies)) {
+                    $session['cookies'] = array_merge($session['cookies'], $altCookies);
+                    ipmiWebSaveSessionCookies(
+                        $mysqli,
+                        $token,
+                        $session['cookies'],
+                        is_array($session['forward_headers'] ?? null) ? $session['forward_headers'] : [],
+                        (string)($session['bmc_scheme'] ?? 'https')
+                    );
+                    if (ipmiWebHasUsableBmcAuth($session['cookies'], is_array($session['forward_headers'] ?? null) ? $session['forward_headers'] : [])) {
+                        ipmiWebEmitMirroredBmcCookiesForProxy($token, $session['cookies']);
+                    }
+                }
+                break;
+            }
+        }
+        // If the BMC does not provide these banners anywhere, return a tiny transparent PNG
+        // to avoid repeated 404s and JS layout retries.
+        if ($isH5Banner && ($httpCode === 404 || $httpCode === 400)) {
+            http_response_code(200);
+            header('Content-Type: image/png');
+            header('Cache-Control: private, max-age=300');
+            echo base64_decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR4nGNgYAAAAAMAASsJTYQAAAAASUVORK5CYII=');
+            exit;
         }
     }
 }
 
-// 200 + HTML login form: session cookie missing, stale, or create-time auto-login failed — try again once.
+// HTML/login/timeout shell: session cookie is stale or session create-time login failed.
+$looksLikeLoginPage = ipmiWebResponseLooksLikeBmcLoginPage($responseBody, $contentTypeResp);
+$hasTimeoutText = ipmiProxyBodyHasSessionTimeout($responseBody);
+$looksLikeSmTimeoutShell = ipmiProxyBodyLooksLikeSupermicroTimeoutShell($responseBody);
 if ($method === 'GET' && $httpCode === 200
-    && ipmiWebResponseLooksLikeBmcLoginPage($responseBody, $contentTypeResp)) {
-    $session['cookies'] = [];
-    $session['forward_headers'] = [];
-    if (ipmiWebAttemptAutoLogin($session)) {
-        ipmiWebSaveSessionCookies(
-            $mysqli,
-            $token,
-            $session['cookies'],
-            is_array($session['forward_headers'] ?? null) ? $session['forward_headers'] : [],
-            (string)($session['bmc_scheme'] ?? 'https')
-        );
-        $bmcScheme = (($session['bmc_scheme'] ?? 'https') === 'http') ? 'http' : 'https';
-        $bmcUrl = $bmcScheme . '://' . $bmcIp . $bmcPath;
-        if ($queryString !== '') {
-            $bmcUrl .= '?' . $queryString;
-        }
-        $fhLogin = ipmiProxyMergeClientBmcForwardHeaders(
-            is_array($session['forward_headers'] ?? null) ? $session['forward_headers'] : [],
-            $bmcScheme,
-            $bmcIp
-        );
-        $retryLogin = ipmiProxyExecute(
-            $bmcUrl,
-            $method,
-            $postBody,
-            $fwdContentType,
-            $session['cookies'],
-            $fhLogin,
-            $bmcIp
-        );
-        if ($retryLogin['raw'] !== false) {
-            $rawResponse = $retryLogin['raw'];
-            $httpCode = $retryLogin['http_code'];
-            $contentTypeResp = $retryLogin['content_type'];
-            [, $responseBody] = ipmiWebCurlExtractFinalHeadersAndBody($rawResponse);
-            $newCookies2 = ipmiWebCurlMergeSetCookiesFromChain($rawResponse, []);
-            if (!empty($newCookies2)) {
-                $session['cookies'] = array_merge($session['cookies'], $newCookies2);
-                ipmiWebSaveSessionCookies(
-                    $mysqli,
-                    $token,
-                    $session['cookies'],
-                    is_array($session['forward_headers'] ?? null) ? $session['forward_headers'] : [],
-                    (string)($session['bmc_scheme'] ?? 'https')
-                );
-            }
-        }
+    && ($looksLikeLoginPage || $hasTimeoutText || $looksLikeSmTimeoutShell)) {
+    if (ipmiProxyDebugEnabled()) {
+        ipmiProxyDebugLog('login_page_detected', [
+            'trace'   => $ipmiTraceId,
+            'bmcPath' => $bmcPath,
+            'loginPage' => $looksLikeLoginPage ? 1 : 0,
+            'timeoutText' => $hasTimeoutText ? 1 : 0,
+            'smTimeoutShell' => $looksLikeSmTimeoutShell ? 1 : 0,
+        ]);
     }
+    if (ipmiProxyDebugEnabled() && ($hasTimeoutText || $looksLikeSmTimeoutShell)) {
+        ipmiProxyDebugLog('session_timeout_detected', [
+            'trace'   => $ipmiTraceId,
+            'bmcPath' => $bmcPath,
+            'timeoutText' => $hasTimeoutText ? 1 : 0,
+            'smTimeoutShell' => $looksLikeSmTimeoutShell ? 1 : 0,
+        ]);
+    }
+    ipmiProxyEmitSessionExpiredPage($tokenPrefix, 'Your session has timed out. You will need to open a new session.');
+    exit;
+}
+
+if (ipmiProxyIsHealthPollPath($bmcPath) && ($httpCode === 401 || $httpCode === 403 || $httpCode >= 500)) {
+    ipmiProxyEmitHealthPollFallbackJson();
+    exit;
 }
 
 http_response_code($httpCode ?: 502);
 
 $ct = strtolower(trim(explode(';', $contentTypeResp)[0] ?? ''));
-$isHtml = ($ct === '' || $ct === 'text/html' || strpos($ct, 'html') !== false);
+$isHtml = ($ct === '' || $ct === 'text/html' || strpos($ct, 'html') !== false || strpos($ct, 'text/plain') !== false);
 $isJs = ($ct === 'application/javascript' || $ct === 'text/javascript');
 $isCss = ($ct === 'text/css');
 $isJson = (strpos($ct, 'json') !== false);
 
 if ($contentTypeResp !== '') {
     header('Content-Type: ' . $contentTypeResp);
+}
+if ($method === 'GET' && ipmiProxyIsBmcStaticAssetPath($bmcPath) && $httpCode >= 200 && $httpCode < 400) {
+    header('Cache-Control: private, max-age=300');
+    if (function_exists('header_remove')) {
+        @header_remove('Pragma');
+    }
 }
 
 // iLO SPA checks document.cookie; without mirrored cookies it stays on #/login while the proxy
@@ -1226,14 +1512,12 @@ if ($rewriteBody) {
             $responseBody = ipmiWebRewriteHtml($responseBody, $tokenPrefix, $host);
         }
         $responseBody = ipmiWebRewriteHtmlRelativeToDocument($responseBody, $tokenPrefix, $bmcPath);
-        // Inject path/fetch/EventSource fixes when we have BMC auth OR when the UI is clearly iLO
-        // (or references /sse/). Requiring auth-only blocked the patch on login HTML / empty jars
-        // → browser still requested /sse/ui at the panel origin (404).
+        // Inject iLO-specific path/fetch/EventSource fixes only for iLO-family HTML (or iLO SSE paths).
+        // Avoid patching other vendors to reduce UI side-effects.
         $authOkHtml = ipmiWebHasUsableBmcAuth($scMirror, $shMirror);
         $shouldInjectIloPatch = $httpCode >= 200 && $httpCode < 400
             && (
-                $authOkHtml
-                || ipmiProxyIsIloFamily($bmcTypeStr)
+                ipmiProxyIsIloFamily($bmcTypeStr)
                 || stripos($responseBody, '/sse/') !== false
             );
         if ($shouldInjectIloPatch) {

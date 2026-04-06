@@ -48,6 +48,8 @@ function ipmiWebCurlExecBmc(string $bmcIp, string $url, callable $configure): ar
         if ($useResolve) {
             $applied = ipmiBmcApplyCurlUrlAndResolve($ch, $url, $bmcIp);
         }
+        // BMC web UIs often gzip HTML/JS. We must decode for reliable login-page fingerprinting.
+        curl_setopt($ch, CURLOPT_ENCODING, '');
         $configure($ch);
         $raw = curl_exec($ch);
         $code = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
@@ -309,6 +311,19 @@ function ipmiWebApplyJsonAuthHints(array $json, array &$cookieJar, array &$forwa
         ipmiWebApplyJsonAuthHints($json['output'], $cookieJar, $forwardHeaders, $depth + 1);
     }
 
+    // AMI/ASRock API login returns CSRFToken in JSON and expects it on subsequent API calls.
+    foreach (['CSRFToken', 'csrfToken', 'csrf_token', 'csrf'] as $k) {
+        if (!empty($json[$k]) && is_string($json[$k])) {
+            $v = trim((string) $json[$k]);
+            if ($v !== '') {
+                $forwardHeaders['X-CSRFTOKEN'] = $v;
+                // Frontend JS reads garc cookie and pushes it into X-CSRFTOKEN for AJAX.
+                $cookieJar['garc'] = $v;
+            }
+            break;
+        }
+    }
+
     // iDRAC /data/login JSON (session id for REST; cookies may also be Set-Cookie on same hop).
     if (!empty($json['authToken']) && is_string($json['authToken'])) {
         $v = trim((string) $json['authToken']);
@@ -420,19 +435,62 @@ function ipmiWebCollectAuthFromLoginResponse(string $raw, array &$cookieJar, arr
  * True if the cookie jar or forwarded headers contain a non-empty BMC auth value.
  * Empty keys (e.g. session=) must not count as logged in.
  */
+function ipmiWebIsAuthValueUsable($v): bool
+{
+    if ($v === null) {
+        return false;
+    }
+    $s = trim((string) $v);
+    if ($s === '') {
+        return false;
+    }
+    $ls = strtolower($s);
+    return !in_array($ls, ['0', 'null', 'undefined', 'none'], true);
+}
+
+/**
+ * Lightweight debug logger that only emits when ipmi_proxy debug is enabled.
+ * Safe to call from any context (no-op if debug helpers are not loaded).
+ *
+ * @param array<string, mixed> $context
+ */
+function ipmiWebDebugLog(string $event, array $context = []): void
+{
+    if (!function_exists('ipmiProxyDebugEnabled') || !function_exists('ipmiProxyDebugLog')) {
+        return;
+    }
+    try {
+        if (ipmiProxyDebugEnabled()) {
+            ipmiProxyDebugLog($event, $context);
+        }
+    } catch (Throwable $e) {
+        // ignore debug errors
+    }
+}
+
 function ipmiWebHasUsableBmcAuth(array $cookieJar, array $forwardHeaders): bool
 {
     foreach ($cookieJar as $v) {
-        if ($v !== null && trim((string)$v) !== '') {
+        if (ipmiWebIsAuthValueUsable($v)) {
             return true;
         }
     }
     foreach ($forwardHeaders as $v) {
-        if ($v !== null && trim((string)$v) !== '') {
+        if (ipmiWebIsAuthValueUsable($v)) {
             return true;
         }
     }
 
+    return false;
+}
+
+function ipmiWebHasSupermicroAuthCookie(array $cookieJar): bool
+{
+    foreach (['SID', 'sid', 'SessionId', 'session_id', 'session', 'sessionid'] as $k) {
+        if (isset($cookieJar[$k]) && ipmiWebIsAuthValueUsable($cookieJar[$k])) {
+            return true;
+        }
+    }
     return false;
 }
 
@@ -523,6 +581,9 @@ function ipmiWebLoginResponseHtmlIsLoginPage(string $raw): bool
         return false;
     }
     $l = strtolower(substr($body, 0, 200000));
+    if (strpos($l, 'session has timed out') !== false || strpos($l, 'session timed out') !== false) {
+        return true;
+    }
     $hasPw = strpos($l, 'type="password"') !== false
         || strpos($l, "type='password'") !== false
         || strpos($l, 'type=password') !== false;
@@ -548,10 +609,23 @@ function ipmiWebLoginResponseHtmlIsLoginPage(string $raw): bool
 function ipmiWebResponseLooksLikeBmcLoginPage(string $body, string $contentType): bool
 {
     $ct = strtolower($contentType);
-    if (strpos($ct, 'html') === false && strpos($ct, 'text/plain') === false) {
+    $l = strtolower(substr($body, 0, 200000));
+    if (ipmiWebResponseLooksLikeSupermicroAuthedShell($body)) {
         return false;
     }
-    $l = strtolower(substr($body, 0, 200000));
+    $maybeHtml = strpos($ct, 'html') !== false
+        || strpos($ct, 'text/plain') !== false
+        || strpos($l, '<html') !== false
+        || strpos($l, '<form') !== false
+        || strpos($l, 'type=\"password\"') !== false
+        || strpos($l, "type='password'") !== false
+        || strpos($l, 'type=password') !== false;
+    if (!$maybeHtml) {
+        return false;
+    }
+    if (strpos($l, 'session has timed out') !== false || strpos($l, 'session timed out') !== false) {
+        return true;
+    }
     if (strpos($l, 'type="password"') === false && strpos($l, "type='password'") === false && strpos($l, 'type=password') === false) {
         return false;
     }
@@ -563,6 +637,91 @@ function ipmiWebResponseLooksLikeBmcLoginPage(string $body, string $contentType)
         || strpos($l, 'username') !== false
         || strpos($l, 'name="username"') !== false
         || strpos($l, "name='username'") !== false) {
+        return true;
+    }
+
+    return false;
+}
+
+/**
+ * Supermicro/ASRock authenticated topmenu shell often contains login-related words
+ * and timeout string constants, but it is not a login or timeout page.
+ */
+function ipmiWebResponseLooksLikeSupermicroAuthedShell(string $body): bool
+{
+    if ($body === '') {
+        return false;
+    }
+    $l = strtolower(substr($body, 0, 200000));
+    if ($l === '') {
+        return false;
+    }
+
+    $hits = 0;
+    if (strpos($l, 'lang_topmenu_greeting') !== false) {
+        $hits++;
+    }
+    if (strpos($l, 'id="refreshid"') !== false || strpos($l, "id='refreshid'") !== false) {
+        $hits++;
+    }
+    if (strpos($l, "sessionstorage.setitem ('_x_auth'") !== false
+        || strpos($l, 'sessionstorage.setitem("_x_auth"') !== false) {
+        $hits++;
+    }
+    if (strpos($l, 'new redfish (null, session_id)') !== false) {
+        $hits++;
+    }
+
+    return $hits >= 2;
+}
+
+/**
+ * Some Supermicro/ASRock timeout shells don't include the timeout sentence directly.
+ * They execute sessionTimeout() via logout_alert() on DOM ready.
+ */
+function ipmiWebResponseLooksLikeSupermicroTimeoutShell(string $body): bool
+{
+    if ($body === '') {
+        return false;
+    }
+    if (ipmiWebResponseLooksLikeSupermicroAuthedShell($body)) {
+        return false;
+    }
+    $l = strtolower(substr($body, 0, 120000));
+    if ($l === '') {
+        return false;
+    }
+    $hasLogoutFn = strpos($l, 'logout_alert') !== false;
+    $hasSessionTimeoutCall = strpos($l, 'sessiontimeout()') !== false
+        || strpos($l, 'sessiontimeout ();') !== false;
+    $hasReadyHook = strpos($l, 'document).ready') !== false || strpos($l, 'jquery(document).ready') !== false;
+
+    return $hasLogoutFn && $hasSessionTimeoutCall && $hasReadyHook;
+}
+
+/**
+ * AMI/ASRock newer BMC UI shell fingerprint.
+ */
+function ipmiWebResponseLooksLikeAmiSpaLogin(string $body): bool
+{
+    if ($body === '') {
+        return false;
+    }
+    $l = strtolower(substr($body, 0, 200000));
+    if ($l === '') {
+        return false;
+    }
+
+    $hasShell = strpos($l, 'source.min.js') !== false && strpos($l, 'styles.min.css') !== false;
+    if (!$hasShell) {
+        return false;
+    }
+
+    if (strpos($l, 'id="ami_logo"') !== false
+        || strpos($l, "id='ami_logo'") !== false
+        || strpos($l, '/api/session') !== false
+        || strpos($l, 'id="main"') !== false
+        || strpos($l, '<main role="main"') !== false) {
         return true;
     }
 
@@ -679,6 +838,18 @@ function ipmiWebCreateSession(mysqli $mysqli, int $serverId, int $userId, string
 
     ipmiWebAttemptAutoLogin($session);
 
+    // Persist upgraded detected vendor type (e.g. generic -> supermicro) so
+    // subsequent proxy requests use the right vendor-specific behavior.
+    $detectedType = strtolower(trim((string)($session['bmc_type'] ?? $bmcType)));
+    if ($detectedType !== '' && $detectedType !== $bmcType) {
+        $upd = $mysqli->prepare('UPDATE ipmi_web_sessions SET bmc_type = ? WHERE token = ? LIMIT 1');
+        if ($upd) {
+            $upd->bind_param('ss', $detectedType, $token);
+            $upd->execute();
+            $upd->close();
+        }
+    }
+
     // Wrong bmc_type (e.g. supermicro vs iLO) skips whole vendor endpoint lists — retry with generic.
     if (ipmiWebNeedsAutoLogin($session) && ipmiWebNormalizeBmcType($bmcType) !== 'generic') {
         $session['bmc_type'] = 'generic';
@@ -716,6 +887,19 @@ function ipmiWebCreateSession(mysqli $mysqli, int $serverId, int $userId, string
         $session['forward_headers'] ?? [],
         (string)($session['bmc_scheme'] ?? 'https')
     );
+
+    $finalType = strtolower(trim((string)($session['bmc_type'] ?? $bmcType)));
+    if ($finalType === '') {
+        $finalType = $bmcType;
+    }
+    if ($finalType !== $bmcType) {
+        $upd = $mysqli->prepare('UPDATE ipmi_web_sessions SET bmc_type = ? WHERE token = ? LIMIT 1');
+        if ($upd) {
+            $upd->bind_param('ss', $finalType, $token);
+            $upd->execute();
+            $upd->close();
+        }
+    }
 
     return $session;
 }
@@ -872,6 +1056,287 @@ function ipmiWebIloEnsureSessionCookieForWebUi(string $baseUrl, string $bmcIp, s
 }
 
 /**
+ * Supermicro/ASRockRack often finalizes the web UI session after login by hitting
+ * /cgi/url_redirect.cgi?url_name=topmenu. Fetch it once to refresh cookies so
+ * the UI doesn't immediately bounce back to the login page.
+ */
+function ipmiWebSupermicroBootstrap(string $baseUrl, string $bmcIp, array &$cookieJar, array &$forwardHeaders): void
+{
+    $baseUrl = rtrim($baseUrl, '/');
+    $originBase = ipmiWebBmcOriginBaseFromConnectUrl($baseUrl, $bmcIp);
+    $url = $baseUrl . '/cgi/url_redirect.cgi?url_name=topmenu';
+
+    [$raw] = ipmiWebCurlExecBmc($bmcIp, $url, static function ($ch) use ($originBase, $cookieJar): void {
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch, CURLOPT_TIMEOUT, 20);
+        curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 10);
+        curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+        curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, false);
+        curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
+        curl_setopt($ch, CURLOPT_HEADER, true);
+        curl_setopt($ch, CURLOPT_USERAGENT, ipmiWebCurlUserAgent());
+        curl_setopt($ch, CURLOPT_HTTPGET, true);
+        $reqHeaders = [
+            'Origin: ' . $originBase,
+            'Referer: ' . $originBase . '/',
+        ];
+        curl_setopt($ch, CURLOPT_HTTPHEADER, $reqHeaders);
+        $parts = [];
+        foreach ($cookieJar as $k => $v) {
+            if ($v !== null && trim((string) $v) !== '') {
+                $parts[] = $k . '=' . $v;
+            }
+        }
+        if ($parts !== []) {
+            curl_setopt($ch, CURLOPT_COOKIE, implode('; ', $parts));
+        }
+    });
+
+    if ($raw === false) {
+        return;
+    }
+
+    ipmiWebCollectAuthFromLoginResponse($raw, $cookieJar, $forwardHeaders);
+}
+
+/**
+ * Validate that Supermicro/ASRock web session is actually authenticated.
+ * A plain SID cookie can still represent an anonymous/expired session.
+ */
+function ipmiWebSupermicroVerifyAuthed(string $baseUrl, string $bmcIp, array $cookieJar): bool
+{
+    if (!ipmiWebHasSupermicroAuthCookie($cookieJar)) {
+        return false;
+    }
+
+    $baseUrl = rtrim($baseUrl, '/');
+    $originBase = ipmiWebBmcOriginBaseFromConnectUrl($baseUrl, $bmcIp);
+    $url = $baseUrl . '/cgi/url_redirect.cgi?url_name=topmenu';
+
+    [$raw, $code] = ipmiWebCurlExecBmc($bmcIp, $url, static function ($ch) use ($originBase, $cookieJar): void {
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch, CURLOPT_TIMEOUT, 20);
+        curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 8);
+        curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+        curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, false);
+        curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
+        curl_setopt($ch, CURLOPT_HEADER, true);
+        curl_setopt($ch, CURLOPT_USERAGENT, ipmiWebCurlUserAgent());
+        curl_setopt($ch, CURLOPT_HTTPGET, true);
+        curl_setopt($ch, CURLOPT_HTTPHEADER, [
+            'Origin: ' . $originBase,
+            'Referer: ' . $originBase . '/',
+        ]);
+        $parts = [];
+        foreach ($cookieJar as $k => $v) {
+            if ($v !== null && trim((string) $v) !== '') {
+                $parts[] = $k . '=' . $v;
+            }
+        }
+        if ($parts !== []) {
+            curl_setopt($ch, CURLOPT_COOKIE, implode('; ', $parts));
+        }
+    });
+
+    if ($raw === false || $code < 200 || $code >= 400) {
+        return false;
+    }
+
+    [, $body] = ipmiWebCurlExtractFinalHeadersAndBody($raw);
+    if (ipmiWebResponseLooksLikeSupermicroTimeoutShell($body)) {
+        return false;
+    }
+    if (ipmiWebResponseLooksLikeBmcLoginPage($body, 'text/html')) {
+        return false;
+    }
+
+    return true;
+}
+
+/**
+ * Validate iDRAC web session by opening a known authenticated UI entrypoint.
+ * A plain -http-session- cookie can be anonymous on some builds.
+ */
+function ipmiWebIdracVerifyAuthed(string $baseUrl, string $bmcIp, array $cookieJar): bool
+{
+    if (!ipmiWebHasUsableBmcAuth($cookieJar, [])) {
+        return false;
+    }
+
+    $baseUrl = rtrim($baseUrl, '/');
+    $originBase = ipmiWebBmcOriginBaseFromConnectUrl($baseUrl, $bmcIp);
+    $targets = [
+        '/restgui/start.html',
+        '/restgui/launch',
+        '/',
+    ];
+
+    foreach ($targets as $path) {
+        $url = $baseUrl . $path;
+        [$raw, $code] = ipmiWebCurlExecBmc($bmcIp, $url, static function ($ch) use ($originBase, $cookieJar): void {
+            curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+            curl_setopt($ch, CURLOPT_TIMEOUT, 20);
+            curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 8);
+            curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+            curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, false);
+            curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
+            curl_setopt($ch, CURLOPT_HEADER, true);
+            curl_setopt($ch, CURLOPT_USERAGENT, ipmiWebCurlUserAgent());
+            curl_setopt($ch, CURLOPT_HTTPGET, true);
+            curl_setopt($ch, CURLOPT_HTTPHEADER, [
+                'Origin: ' . $originBase,
+                'Referer: ' . $originBase . '/',
+            ]);
+            $parts = [];
+            foreach ($cookieJar as $k => $v) {
+                if ($v !== null && trim((string) $v) !== '') {
+                    $parts[] = $k . '=' . $v;
+                }
+            }
+            if ($parts !== []) {
+                curl_setopt($ch, CURLOPT_COOKIE, implode('; ', $parts));
+            }
+        });
+
+        if ($raw === false || $code < 200 || $code >= 400) {
+            continue;
+        }
+
+        [, $body] = ipmiWebCurlExtractFinalHeadersAndBody($raw);
+        if (ipmiWebResponseLooksLikeBmcLoginPage($body, 'text/html')) {
+            continue;
+        }
+
+        return true;
+    }
+
+    return false;
+}
+
+/**
+ * Supermicro/ASRockRack login often includes hidden fields or CSRF tokens.
+ * Fetch the login page and return hidden input fields + updated cookies + form action + user/pass field names.
+ *
+ * @return array{fields: array<string,string>, cookies: array<string,string>, action: string, userField: string, passField: string, isSupermicro: bool}
+ */
+function ipmiWebSupermicroFetchLoginFields(string $baseUrl, string $bmcIp, array $cookieJar): array
+{
+    $baseUrl = rtrim($baseUrl, '/');
+    $originBase = ipmiWebBmcOriginBaseFromConnectUrl($baseUrl, $bmcIp);
+    $targets = [
+        $baseUrl . '/',
+        $baseUrl . '/cgi/login.cgi',
+        $baseUrl . '/login.html',
+    ];
+
+    foreach ($targets as $url) {
+        [$raw] = ipmiWebCurlExecBmc($bmcIp, $url, static function ($ch) use ($originBase, $cookieJar): void {
+            curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+            curl_setopt($ch, CURLOPT_TIMEOUT, 20);
+            curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 10);
+            curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+            curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, false);
+            curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
+            curl_setopt($ch, CURLOPT_HEADER, true);
+            curl_setopt($ch, CURLOPT_USERAGENT, ipmiWebCurlUserAgent());
+            curl_setopt($ch, CURLOPT_HTTPGET, true);
+            $reqHeaders = [
+                'Origin: ' . $originBase,
+                'Referer: ' . $originBase . '/',
+            ];
+            curl_setopt($ch, CURLOPT_HTTPHEADER, $reqHeaders);
+            $parts = [];
+            foreach ($cookieJar as $k => $v) {
+                if ($v !== null && trim((string) $v) !== '') {
+                    $parts[] = $k . '=' . $v;
+                }
+            }
+            if ($parts !== []) {
+                curl_setopt($ch, CURLOPT_COOKIE, implode('; ', $parts));
+            }
+        });
+
+        if ($raw === false) {
+            continue;
+        }
+
+        [$hdrs, $body] = ipmiWebCurlExtractFinalHeadersAndBody($raw);
+        $newCookies = ipmiWebCurlMergeSetCookiesFromChain($raw, []);
+        if ($newCookies !== []) {
+            $cookieJar = array_merge($cookieJar, $newCookies);
+        }
+
+        $fields = [];
+        $action = '';
+        $userField = '';
+        $passField = '';
+        $isSupermicro = false;
+
+        if ($body !== '' && stripos($body, '<form') !== false) {
+            if (preg_match('/<form[^>]+action\\s*=\\s*["\\\']([^"\\\']+)["\\\']/i', $body, $fm)) {
+                $action = trim((string) $fm[1]);
+            }
+        }
+        if ($body !== '') {
+            $lb = strtolower($body);
+            if (strpos($lb, 'supermicro') !== false || strpos($lb, 'asrockrack') !== false || strpos($lb, 'aten') !== false) {
+                $isSupermicro = true;
+            }
+        }
+
+        if ($body !== '' && stripos($body, '<input') !== false) {
+            if (preg_match_all('/<input[^>]+>/i', $body, $m)) {
+                foreach ($m[0] as $tag) {
+                    if (!preg_match('/name\\s*=\\s*["\\\']?([^"\\\'\\s>]+)/i', $tag, $nm)) {
+                        continue;
+                    }
+                    $name = trim((string) $nm[1]);
+                    if ($name === '') {
+                        continue;
+                    }
+                    $type = '';
+                    if (preg_match('/type\\s*=\\s*["\\\']?([^"\\\'\\s>]+)/i', $tag, $tm)) {
+                        $type = strtolower(trim((string) $tm[1]));
+                    }
+                    $val = '';
+                    if (preg_match('/value\\s*=\\s*["\\\']([^"\\\']*)/i', $tag, $vm)) {
+                        $val = (string) $vm[1];
+                    }
+                    if ($type === 'password' && $passField === '') {
+                        $passField = $name;
+                    } elseif (($type === 'text' || $type === '' || $type === 'email') && $userField === '' && $name !== $passField) {
+                        $userField = $name;
+                    }
+                    if ($type === '' || $type === 'hidden' || $type === 'submit' || $type === 'button') {
+                        $fields[$name] = $val;
+                    }
+                }
+            }
+        }
+
+        if ($fields !== [] || $action !== '' || $userField !== '' || $passField !== '' || $isSupermicro) {
+            return [
+                'fields'    => $fields,
+                'cookies'   => $cookieJar,
+                'action'    => $action,
+                'userField' => $userField,
+                'passField' => $passField,
+                'isSupermicro' => $isSupermicro,
+            ];
+        }
+    }
+
+    return [
+        'fields'    => [],
+        'cookies'   => $cookieJar,
+        'action'    => '',
+        'userField' => '',
+        'passField' => '',
+        'isSupermicro' => false,
+    ];
+}
+
+/**
  * Auto-login to BMC web UI via cURL, storing cookies and/or Redfish-style auth headers.
  */
 function ipmiWebAttemptAutoLogin(array &$session): bool
@@ -905,13 +1370,16 @@ function ipmiWebAttemptAutoLogin(array &$session): bool
         $session['forward_headers'] = [];
     }
 
-    $loginEndpoints = ipmiWebLoginEndpoints($bmcType, $user, $pass);
-
     // Prefer HTTPS; retry all endpoints over HTTP if nothing succeeded (some BMCs / lab setups).
     $bases = ['https://' . $ip, 'http://' . $ip];
 
     foreach ($bases as $baseUrl) {
         $baseUrl = rtrim($baseUrl, '/');
+        ipmiWebDebugLog('autologin_base', [
+            'base' => $baseUrl,
+            'ip' => $ip,
+            'type' => $bmcType,
+        ]);
         $primeJar = [];
         $primeHdr = [];
         [$praw] = ipmiWebCurlExecBmc($ip, $baseUrl . '/', static function ($ch): void {
@@ -929,14 +1397,73 @@ function ipmiWebAttemptAutoLogin(array &$session): bool
             ipmiWebCollectAuthFromLoginResponse($praw, $primeJar, $primeHdr);
         }
 
+        $smLoginMeta = null;
+        $smCookieJar = $primeJar;
+        $typeNorm = ipmiWebNormalizeBmcType($bmcType);
+        $primeBody = '';
+        if ($praw !== false) {
+            [, $primeBody] = ipmiWebCurlExtractFinalHeadersAndBody($praw);
+        }
+        if ($typeNorm === 'generic') {
+            if (ipmiWebResponseLooksLikeAmiSpaLogin($primeBody)) {
+                $typeNorm = 'ami';
+                $session['bmc_type'] = 'ami';
+            } else {
+                $smLoginMeta = ipmiWebSupermicroFetchLoginFields($baseUrl, $ip, $primeJar);
+                $smCookieJar = $smLoginMeta['cookies'] ?? $primeJar;
+                if (!empty($smLoginMeta['isSupermicro'])) {
+                    $typeNorm = 'supermicro';
+                    $session['bmc_type'] = 'supermicro';
+                }
+            }
+        }
+
+        $loginEndpoints = ipmiWebLoginEndpoints($typeNorm, $user, $pass);
+
         foreach ($loginEndpoints as $endpoint) {
-            $cookieJar = $primeJar;
+            $cookieJar = $smCookieJar;
             $forwardHeaders = [];
 
             $url = $baseUrl . $endpoint['path'];
             $originBase = ipmiWebBmcOriginBaseFromConnectUrl($baseUrl, $ip);
 
-            [$raw, $code] = ipmiWebCurlExecBmc($ip, $url, static function ($ch) use ($endpoint, $originBase): void {
+            $postPayload = $endpoint['post'] ?? null;
+            $isSmType = ($typeNorm === 'supermicro');
+            if ($isSmType && is_array($postPayload)) {
+                if ($smLoginMeta === null) {
+                    $smLoginMeta = ipmiWebSupermicroFetchLoginFields($baseUrl, $ip, $cookieJar);
+                    $smCookieJar = $smLoginMeta['cookies'] ?? $cookieJar;
+                }
+                if (is_array($smLoginMeta) && !empty($smLoginMeta['fields'])) {
+                    $postPayload = array_merge($smLoginMeta['fields'], $postPayload);
+                }
+                if (is_array($smLoginMeta)) {
+                    $uf = trim((string)($smLoginMeta['userField'] ?? ''));
+                    $pf = trim((string)($smLoginMeta['passField'] ?? ''));
+                    if ($uf !== '' && (!array_key_exists($uf, $postPayload) || $postPayload[$uf] === '')) {
+                        $postPayload[$uf] = $user;
+                    }
+                    if ($pf !== '' && (!array_key_exists($pf, $postPayload) || $postPayload[$pf] === '')) {
+                        $postPayload[$pf] = $pass;
+                    }
+                    $act = trim((string)($smLoginMeta['action'] ?? ''));
+                    if ($act !== '') {
+                        if (str_starts_with($act, 'http://') || str_starts_with($act, 'https://')) {
+                            $pu = parse_url($act, PHP_URL_PATH);
+                            if (is_string($pu) && $pu !== '') {
+                                $url = $baseUrl . $pu;
+                            }
+                        } elseif (str_starts_with($act, '/')) {
+                            $url = $baseUrl . $act;
+                        } else {
+                            $url = $baseUrl . '/' . ltrim($act, '/');
+                        }
+                    }
+                }
+                $cookieJar = $smCookieJar;
+            }
+
+            [$raw, $code] = ipmiWebCurlExecBmc($ip, $url, static function ($ch) use ($endpoint, $originBase, $postPayload): void {
                 curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
                 curl_setopt($ch, CURLOPT_TIMEOUT, 45);
                 curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 15);
@@ -946,18 +1473,28 @@ function ipmiWebAttemptAutoLogin(array &$session): bool
                 curl_setopt($ch, CURLOPT_HEADER, true);
                 curl_setopt($ch, CURLOPT_USERAGENT, ipmiWebCurlUserAgent());
 
-                if (isset($endpoint['post'])) {
+                if ($postPayload !== null) {
                     curl_setopt($ch, CURLOPT_POST, true);
-                    if (is_array($endpoint['post'])) {
-                        $body = http_build_query($endpoint['post']);
+                    if (is_array($postPayload)) {
+                        $body = http_build_query($postPayload);
                         curl_setopt($ch, CURLOPT_POSTFIELDS, $body);
-                        curl_setopt($ch, CURLOPT_HTTPHEADER, [
+                        $reqHeaders = [
                             'Content-Type: application/x-www-form-urlencoded',
                             'Origin: ' . $originBase,
                             'Referer: ' . $originBase . '/',
-                        ]);
+                        ];
+                        if (!empty($endpoint['accept'])) {
+                            $reqHeaders[] = 'Accept: ' . (string) $endpoint['accept'];
+                        }
+                        if (!empty($endpoint['redfish'])) {
+                            $reqHeaders[] = 'OData-Version: 4.0';
+                        }
+                        if (!empty($endpoint['xhr'])) {
+                            $reqHeaders[] = 'X-Requested-With: XMLHttpRequest';
+                        }
+                        curl_setopt($ch, CURLOPT_HTTPHEADER, $reqHeaders);
                     } else {
-                        curl_setopt($ch, CURLOPT_POSTFIELDS, (string) $endpoint['post']);
+                        curl_setopt($ch, CURLOPT_POSTFIELDS, (string) $postPayload);
                         $jsonHeaders = [
                             'Content-Type: application/json',
                             'Origin: ' . $originBase,
@@ -978,14 +1515,42 @@ function ipmiWebAttemptAutoLogin(array &$session): bool
             });
 
             if ($raw === false) {
+                ipmiWebDebugLog('autologin_attempt', [
+                    'path' => (string) ($endpoint['path'] ?? ''),
+                    'http' => 0,
+                    'result' => 'curl_failed',
+                ]);
                 continue;
             }
 
             ipmiWebCollectAuthFromLoginResponse($raw, $cookieJar, $forwardHeaders);
 
+            $isSupermicro = $isSmType || (!empty($smLoginMeta['isSupermicro']));
+            if ($isSupermicro && !ipmiWebHasSupermicroAuthCookie($cookieJar)) {
+                $forwardHeaders = []; // ignore misleading X-Auth-Token for Supermicro
+            }
+
+            $loginHtml = ipmiWebLoginResponseHtmlIsLoginPage($raw);
+            $loginJsonFail = ipmiWebLoginResponseBodyIsFailure($raw);
+            ipmiWebDebugLog('autologin_attempt', [
+                'path' => (string) ($endpoint['path'] ?? ''),
+                'http' => $code,
+                'isSupermicro' => $isSupermicro ? 1 : 0,
+                'cookies' => array_keys(array_filter($cookieJar, 'ipmiWebIsAuthValueUsable')),
+                'headers' => array_keys(array_filter($forwardHeaders, 'ipmiWebIsAuthValueUsable')),
+                'loginHtml' => $loginHtml ? 1 : 0,
+                'loginJsonFail' => $loginJsonFail ? 1 : 0,
+            ]);
+
             if (ipmiWebLoginResponseLooksAuthed($code, $cookieJar, $forwardHeaders)
-                && !ipmiWebLoginResponseBodyIsFailure($raw)
+                && !$loginJsonFail
                 && !ipmiWebLoginShouldRejectAsLoginHtml($raw, $cookieJar, $forwardHeaders, $bmcType)) {
+                if ($isSupermicro && !ipmiWebHasSupermicroAuthCookie($cookieJar)) {
+                    continue;
+                }
+                if (ipmiWebNormalizeBmcType($bmcType) === 'supermicro') {
+                    ipmiWebSupermicroBootstrap($baseUrl, $ip, $cookieJar, $forwardHeaders);
+                }
                 $pathUsed = (string) ($endpoint['path'] ?? '');
                 $needIloBridge = ipmiWebIsIloFamilyType($bmcType)
                     || (ipmiWebNormalizeBmcType($bmcType) === 'generic'
@@ -999,10 +1564,31 @@ function ipmiWebAttemptAutoLogin(array &$session): bool
                 if (ipmiWebIsIloFamilyType($bmcType)) {
                     ipmiWebSyncIloSessionAndSessionKeyCookies($cookieJar);
                 }
+                if ($isSupermicro && !ipmiWebSupermicroVerifyAuthed($baseUrl, $ip, $cookieJar)) {
+                    ipmiWebDebugLog('autologin_attempt', [
+                        'path' => (string) ($endpoint['path'] ?? ''),
+                        'http' => $code,
+                        'result' => 'supermicro_verify_failed',
+                    ]);
+                    continue;
+                }
+                if (ipmiWebNormalizeBmcType($bmcType) === 'idrac' && !ipmiWebIdracVerifyAuthed($baseUrl, $ip, $cookieJar)) {
+                    ipmiWebDebugLog('autologin_attempt', [
+                        'path' => (string) ($endpoint['path'] ?? ''),
+                        'http' => $code,
+                        'result' => 'idrac_verify_failed',
+                    ]);
+                    continue;
+                }
                 $session['cookies'] = $cookieJar;
                 $session['forward_headers'] = $forwardHeaders;
                 $session['bmc_scheme'] = (strncasecmp($baseUrl, 'http://', 7) === 0) ? 'http' : 'https';
 
+                ipmiWebDebugLog('autologin_success', [
+                    'path' => (string) ($endpoint['path'] ?? ''),
+                    'base' => $baseUrl,
+                    'cookies' => array_keys(array_filter($cookieJar, 'ipmiWebIsAuthValueUsable')),
+                ]);
                 return true;
             }
         }
@@ -1012,6 +1598,10 @@ function ipmiWebAttemptAutoLogin(array &$session): bool
     $session['forward_headers'] = $prevHeaders;
     $session['bmc_scheme'] = $prevScheme;
 
+    ipmiWebDebugLog('autologin_failed', [
+        'ip' => $ip,
+        'type' => $bmcType,
+    ]);
     return false;
 }
 
@@ -1021,7 +1611,10 @@ function ipmiWebLoginEndpoints(string $bmcType, string $user, string $pass): arr
 
     switch ($type) {
         case 'supermicro':
+            $smUser = base64_encode($user);
+            $smPass = base64_encode(str_replace('\\', '\\\\', $pass));
             return [
+                ['path' => '/cgi/login.cgi', 'post' => ['name' => $smUser, 'pwd' => $smPass, 'check' => '00']],
                 ['path' => '/cgi/login.cgi', 'post' => ['name' => $user, 'pwd' => $pass]],
                 ['path' => '/cgi/login.cgi', 'post' => ['username' => $user, 'password' => $pass]],
             ];
@@ -1054,6 +1647,15 @@ function ipmiWebLoginEndpoints(string $bmcType, string $user, string $pass): arr
                 ['path' => '/redfish/v1/SessionService/Sessions', 'post' => $redfishBody, 'accept' => 'application/json', 'redfish' => true],
                 ['path' => '/redfish/v1/SessionService/Sessions/', 'post' => $redfishBody, 'accept' => 'application/json', 'redfish' => true],
             ];
+        case 'ami':
+            return [
+                [
+                    'path'   => '/api/session',
+                    'post'   => ['username' => $user, 'password' => $pass],
+                    'accept' => 'application/json, text/javascript, */*; q=0.01',
+                    'xhr'    => true,
+                ],
+            ];
         default:
             $redfishBody = json_encode(['UserName' => $user, 'Password' => $pass], JSON_UNESCAPED_SLASHES);
             $iloJsonLogin = [
@@ -1066,6 +1668,12 @@ function ipmiWebLoginEndpoints(string $bmcType, string $user, string $pass): arr
             return [
                 $iloJsonLogin,
                 ['path' => '/data/login', 'post' => ['user' => $user, 'password' => $pass]],
+                [
+                    'path'   => '/api/session',
+                    'post'   => ['username' => $user, 'password' => $pass],
+                    'accept' => 'application/json, text/javascript, */*; q=0.01',
+                    'xhr'    => true,
+                ],
                 ['path' => '/redfish/v1/SessionService/Sessions', 'post' => $redfishBody, 'accept' => 'application/json', 'redfish' => true],
                 ['path' => '/redfish/v1/SessionService/Sessions/', 'post' => $redfishBody, 'accept' => 'application/json', 'redfish' => true],
                 ['path' => '/cgi/login.cgi', 'post' => ['name' => $user, 'pwd' => $pass]],
@@ -1082,6 +1690,8 @@ function ipmiWebNormalizeBmcType(string $bmcType): string
         'super micro'  => 'supermicro',
         'asrockrack'   => 'supermicro',
         'asrock'       => 'supermicro',
+        'ami'          => 'ami',
+        'ami-bmc'      => 'ami',
         'ilo'          => 'ilo4',
         'hpe'          => 'ilo4',
         'hp'           => 'ilo4',
@@ -1090,7 +1700,7 @@ function ipmiWebNormalizeBmcType(string $bmcType): string
     if (isset($aliases[$type])) {
         return $aliases[$type];
     }
-    if (in_array($type, ['supermicro', 'ilo4', 'idrac'], true)) {
+    if (in_array($type, ['supermicro', 'ilo4', 'idrac', 'ami'], true)) {
         return $type;
     }
     // HPE iLO 5/6 (and labels like ilo5-gen2) use the same login paths as iLO 4.
@@ -1194,7 +1804,7 @@ function ipmiWebBuildCookieString(array $session): string
     }
     $parts = [];
     foreach ($session['cookies'] as $k => $v) {
-        if ($v !== null && trim((string)$v) !== '') {
+        if (ipmiWebIsAuthValueUsable($v)) {
             $parts[] = $k . '=' . $v;
         }
     }
@@ -1229,7 +1839,7 @@ function ipmiWebEmitMirroredBmcCookiesForProxy(string $token, array $cookies): v
         if ($n >= 16) {
             break;
         }
-        if ($value === null || trim((string)$value) === '') {
+        if (!ipmiWebIsAuthValueUsable($value)) {
             continue;
         }
         $name = (string)$name;
@@ -1387,6 +1997,11 @@ function ipmiWebRewriteHtmlRelativeToDocument(string $html, string $tokenPrefix,
             }
             if (stripos($path, 'ipmi_proxy.php') !== false) {
                 return $m[0];
+            }
+            // For vendor UIs (Supermicro/ASRock), relative assets often live at root (js/, css/, img/).
+            // Treat these as root-relative to avoid /cgi/js/... rewrites.
+            if (preg_match('#^(js|css|img|images|fonts|res|resources|static)/#i', $path)) {
+                return $attr . $tokenPrefix . '/' . ltrim($path, '/');
             }
             $resolved = ipmiWebResolveRelativePathFromDir($dir, $path);
             if ($resolved === '') {

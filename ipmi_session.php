@@ -18,6 +18,8 @@ $role = (string)($_SESSION['role'] ?? 'user');
 $serverId = (int)($_GET['id'] ?? 0);
 $requestCsrf = (string)($_GET['csrf_token'] ?? '');
 $sessionCsrf = (string)($_SESSION['csrf_token'] ?? '');
+$debugProxy = (string)($_GET['ipmi_proxy_debug'] ?? '') === '1'
+    || (string)($_GET['debug'] ?? '') === '1';
 $error = '';
 $sessionData = null;
 
@@ -35,12 +37,24 @@ try {
   $error = $e->getMessage();
 }
 
+$launchUrl = null;
 if ($error === '' && $sessionData) {
-  // Launch at root and let vendor UI route naturally after session auth.
+  // Launch at a vendor-appropriate landing path.
+  // Supermicro/ASRockRack often expects topmenu to render the dashboard frame.
+  $launchPath = '/';
+  $typeNorm = ipmiWebNormalizeBmcType((string) ($sessionData['bmc_type'] ?? 'generic'));
+  if ($typeNorm === 'supermicro') {
+    $launchPath = '/cgi/url_redirect.cgi?url_name=topmenu';
+  }
   // Forcing #/dashboard can create login<->dashboard loops on some BMC UIs.
-  $launchUrl = ipmiWebBuildProxyUrl($sessionData['token'], '/');
-  header('Location: ' . $launchUrl, true, 302);
-  exit();
+  $launchUrl = ipmiWebBuildProxyUrl($sessionData['token'], $launchPath);
+  if ($debugProxy) {
+    $launchUrl .= (str_contains($launchUrl, '?') ? '&' : '?') . 'ipmi_proxy_debug=1';
+  }
+  if (!$debugProxy) {
+    header('Location: ' . $launchUrl, true, 302);
+    exit();
+  }
 }
 
 $title = 'IPMI Session';
@@ -57,8 +71,35 @@ $title = 'IPMI Session';
   <main class="ipmi-login-main" style="max-width:780px;margin:40px auto;">
     <section class="ipmi-card" style="padding:28px;">
       <h1 class="ipmi-login-form-title" style="margin-bottom:12px;">IPMI Session</h1>
-      <p class="ipmi-login-error" role="alert"><?= htmlspecialchars($error, ENT_QUOTES, 'UTF-8') ?></p>
-      <p><a href="index.php" class="ipmi-btn ipmi-btn-refresh">Back to panel</a></p>
+      <?php if ($error !== ''): ?>
+        <p class="ipmi-login-error" role="alert"><?= htmlspecialchars($error, ENT_QUOTES, 'UTF-8') ?></p>
+        <p>
+          <a href="index.php" class="ipmi-btn ipmi-btn-refresh">Back to panel</a>
+        </p>
+      <?php elseif ($debugProxy && $launchUrl): ?>
+        <p style="margin:0 0 12px;">
+          Debug mode is enabled. Click below to open the IPMI session with debug logging.
+        </p>
+        <p style="margin:0 0 16px;">
+          <a href="<?= htmlspecialchars($launchUrl, ENT_QUOTES, 'UTF-8') ?>" class="ipmi-btn ipmi-btn-power" target="_blank" rel="noopener">Open IPMI Session (Debug ON)</a>
+        </p>
+        <div style="background:#0f1b2b;border:1px solid #1f3550;border-radius:10px;padding:12px;margin-bottom:16px;">
+          <p style="margin:0 0 8px;font-size:14px;opacity:.9;">After it opens:</p>
+          <ol style="margin:0 0 0 18px;padding:0;font-size:14px;opacity:.85;">
+            <li>Open DevTools → Console.</li>
+            <li>Look for a group named <strong>IPMI Proxy debug</strong>.</li>
+            <li>Copy the object (or run <code>copy(window.IPMI_PROXY_DEBUG)</code>).</li>
+          </ol>
+        </div>
+        <p style="margin:0 0 8px;font-size:13px;opacity:.75;">Direct debug URL:</p>
+        <input type="text" readonly style="width:100%;padding:8px;border-radius:8px;border:1px solid #1f3550;background:#0f1b2b;color:#cfe6ff;" value="<?= htmlspecialchars($launchUrl, ENT_QUOTES, 'UTF-8') ?>">
+        <p style="margin-top:12px;">
+          <a href="index.php" class="ipmi-btn ipmi-btn-refresh">Back to panel</a>
+        </p>
+      <?php else: ?>
+        <p class="ipmi-login-error" role="alert">Session could not be created.</p>
+        <p><a href="index.php" class="ipmi-btn ipmi-btn-refresh">Back to panel</a></p>
+      <?php endif; ?>
     </section>
   </main>
 </body>
