@@ -184,7 +184,7 @@ function ipmiWebProbeServerWebUi(mysqli $mysqli, int $serverId): array
         'bmc_scheme'       => 'https',
     ];
 
-    if (!ipmiWebAttemptAutoLogin($session)) {
+    if (!ipmiWebAttemptAutoLogin($session, $mysqli)) {
         return ['ok' => false, 'error' => 'auto_login_failed'];
     }
 

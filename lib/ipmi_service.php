@@ -310,16 +310,17 @@ class IPMIService
       'supermiscro' => 'supermicro',
       'super micro' => 'supermicro',
       'super misc' => 'supermicro',
-      'asrockrack' => 'supermicro',
-      'asrock rack' => 'supermicro',
-      'asrock' => 'supermicro',
+      'asrockrack' => 'ami',
+      'asrock rack' => 'ami',
+      'asrock' => 'ami',
+      'ami' => 'ami',
       'ilo' => 'ilo4',
       'dell' => 'idrac',
     ];
     if (isset($aliases[$type])) {
       $type = $aliases[$type];
     }
-    if (in_array($type, ['supermicro', 'ilo4', 'idrac', 'generic'], true)) {
+    if (in_array($type, ['supermicro', 'ilo4', 'idrac', 'ami', 'generic'], true)) {
       return $type;
     }
     return 'generic';

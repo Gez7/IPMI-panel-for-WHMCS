@@ -127,7 +127,11 @@ function detectBmcTypeForServer($ip, $user, $pass)
   }
 
   if (strpos($normalized, 'asrockrack') !== false || strpos($normalized, 'asrock') !== false) {
-    return 'supermicro';
+    return 'ami';
+  }
+
+  if (strpos($normalized, 'american megatrends') !== false || strpos($normalized, 'ami') !== false) {
+    return 'ami';
   }
 
   return 'generic';

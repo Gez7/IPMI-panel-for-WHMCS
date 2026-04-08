@@ -44,7 +44,12 @@ if ($error === '' && $sessionData) {
   $launchPath = '/';
   $typeNorm = ipmiWebNormalizeBmcType((string) ($sessionData['bmc_type'] ?? 'generic'));
   if ($typeNorm === 'supermicro') {
-    $launchPath = '/cgi/url_redirect.cgi?url_name=topmenu';
+    // Force legacy topmenu for Supermicro to avoid SPA #login/#dashboard loops.
+    $launchPath = '/cgi/url_redirect.cgi?url_name=topmenu&sm_topmenu=1';
+  } elseif ($typeNorm === 'ilo4') {
+    $launchPath = '/';
+  } elseif ($typeNorm === 'ami') {
+    $launchPath = '/';
   }
   // Forcing #/dashboard can create login<->dashboard loops on some BMC UIs.
   $launchUrl = ipmiWebBuildProxyUrl($sessionData['token'], $launchPath);

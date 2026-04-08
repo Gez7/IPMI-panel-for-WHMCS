@@ -57,15 +57,19 @@ function ipmiProxyDebugStripFromQuery(string $queryString): string
  */
 function ipmiProxyDebugMaybeSetCookie(): void
 {
-    if (!isset($_GET['ipmi_proxy_debug']) || (string) $_GET['ipmi_proxy_debug'] !== '1') {
+    if (!isset($_GET['ipmi_proxy_debug'])) {
+        return;
+    }
+    $val = (string) $_GET['ipmi_proxy_debug'];
+    if ($val !== '1' && $val !== '0' && strcasecmp($val, 'off') !== 0) {
         return;
     }
     $secure = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off')
         || ((int) ($_SERVER['SERVER_PORT'] ?? 0) === 443);
-    $expires = time() + 86400;
+    $expires = ($val === '1') ? (time() + 86400) : (time() - 3600);
     $path = '/';
     if (PHP_VERSION_ID >= 70300) {
-        setcookie('ipmi_proxy_debug', '1', [
+        setcookie('ipmi_proxy_debug', $val === '1' ? '1' : '0', [
             'expires'  => $expires,
             'path'     => $path,
             'secure'   => $secure,
@@ -73,7 +77,7 @@ function ipmiProxyDebugMaybeSetCookie(): void
             'samesite' => 'Lax',
         ]);
     } else {
-        setcookie('ipmi_proxy_debug', '1', $expires, $path, '', $secure, false);
+        setcookie('ipmi_proxy_debug', $val === '1' ? '1' : '0', $expires, $path, '', $secure, false);
     }
 }
 
@@ -225,6 +229,22 @@ function ipmiProxyDebugAppendConsoleScript(string &$html, string $traceId, strin
         . 'console.groupCollapsed("%cIPMI Proxy debug","font-weight:bold;color:#063;background:#dfefff;padding:2px 8px;border-radius:3px");'
         . 'console.log(P);console.groupEnd();'
         . 'if(typeof window.IPMI_PROXY_DEBUG==="undefined")window.IPMI_PROXY_DEBUG=P;'
+        . 'try{var txt="";try{txt=JSON.stringify(P,null,2);}catch(e1){txt=String(P);} '
+        . 'var box=document.getElementById("ipmi-proxy-debug-box");'
+        . 'if(!box){box=document.createElement("div");box.id="ipmi-proxy-debug-box";'
+        . 'box.style.cssText="position:fixed;right:12px;bottom:12px;z-index:2147483647;'
+        . 'width:520px;max-width:90vw;background:#0b1630;color:#dce6ff;border:1px solid #2b3d60;'
+        . 'border-radius:8px;box-shadow:0 10px 30px rgba(0,0,0,.35);padding:10px;font-family:monospace;font-size:12px;";'
+        . 'var title=document.createElement("div");title.textContent="IPMI Proxy Debug (copy text)";'
+        . 'title.style.cssText="font-weight:bold;margin-bottom:6px;";'
+        . 'var btn=document.createElement("button");btn.textContent="Copy";'
+        . 'btn.style.cssText="float:right;margin-top:-2px;background:#22477a;color:#fff;border:0;border-radius:6px;padding:4px 10px;cursor:pointer;";'
+        . 'btn.onclick=function(){try{var ta=document.getElementById(\'ipmi-proxy-debug-text\');ta.select();document.execCommand(\'copy\');}catch(e){}};'
+        . 'var ta=document.createElement("textarea");ta.id="ipmi-proxy-debug-text";ta.readOnly=true;'
+        . 'ta.style.cssText="width:100%;height:240px;resize:vertical;background:#0f1d3a;color:#dce6ff;border:1px solid #2b3d60;border-radius:6px;padding:6px;";'
+        . 'box.appendChild(title);box.appendChild(btn);box.appendChild(ta);document.body.appendChild(box);} '
+        . 'var ta2=document.getElementById("ipmi-proxy-debug-text");if(ta2&&ta2.value!==txt){ta2.value=txt;}'
+        . '}catch(e2){}'
         . '}catch(e){console.warn("IPMI Proxy debug",e);}})();'
         . '</script>';
     if (stripos($html, '</body>') !== false) {

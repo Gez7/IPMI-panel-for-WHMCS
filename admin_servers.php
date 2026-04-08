@@ -159,7 +159,7 @@ function detectBmcType($ip, $user, $pass)
   }
 
   if (strpos($normalized, 'asrockrack') !== false || strpos($normalized, 'asrock') !== false) {
-    return ['type' => 'supermicro', 'vendor' => 'ASRockRack'];
+    return ['type' => 'ami', 'vendor' => 'ASRockRack'];
   }
 
   foreach ($genericVendors as $needle => $label) {
@@ -191,11 +191,14 @@ function normalizeBmcType($bmcType)
     'ilo' => 'ilo4',
     'i lo' => 'ilo4',
     'dell' => 'idrac',
+    'ami' => 'ami',
+    'asrockrack' => 'ami',
+    'asrock' => 'ami',
   ];
   if (isset($aliases[$type])) {
     $type = $aliases[$type];
   }
-  if (in_array($type, ['auto', 'supermicro', 'ilo4', 'idrac', 'generic'], true)) {
+  if (in_array($type, ['auto', 'supermicro', 'ilo4', 'idrac', 'ami', 'generic'], true)) {
     return $type;
   }
   return '';
@@ -652,7 +655,8 @@ if (isset($_SESSION['message'])) {
 
 $sampleCsv = "server_name,server_ip,ipmi_ip,ipmi_user,ipmi_pass,bmc_type,notes\n"
   . "server-1,,10.0.0.100,ADMIN,ExamplePass123,auto,Example server\n"
-  . "server-2,172.16.0.10,10.0.0.101,ADMIN,ExamplePass456,supermicro,Imported in bulk";
+  . "server-2,172.16.0.10,10.0.0.101,ADMIN,ExamplePass456,supermicro,Imported in bulk\n"
+  . "server-3,172.16.0.11,10.0.0.102,ADMIN,ExamplePass789,ami,ASRockRack / AMI example";
 $sampleCsvDataUrl = 'data:text/csv;charset=utf-8,' . rawurlencode($sampleCsv);
 
 // Get servers list
@@ -865,6 +869,7 @@ if (isset($_GET['edit'])) {
       <select name="bmc_type">
         <option value="auto" <?= ($editServer['bmc_type'] ?? 'auto') === 'auto' ? 'selected' : '' ?>>Auto Detect</option>
         <option value="supermicro" <?= ($editServer['bmc_type'] ?? '') === 'supermicro' ? 'selected' : '' ?>>Supermicro</option>
+        <option value="ami" <?= ($editServer['bmc_type'] ?? '') === 'ami' ? 'selected' : '' ?>>AMI / ASRockRack</option>
         <option value="ilo4" <?= ($editServer['bmc_type'] ?? '') === 'ilo4' ? 'selected' : '' ?>>iLO4</option>
         <option value="idrac" <?= ($editServer['bmc_type'] ?? '') === 'idrac' ? 'selected' : '' ?>>iDRAC</option>
         <option value="generic" <?= ($editServer['bmc_type'] ?? '') === 'generic' ? 'selected' : '' ?>>Generic / Other</option>
