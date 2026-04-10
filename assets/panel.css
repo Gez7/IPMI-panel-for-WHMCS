@@ -925,7 +925,8 @@ button.ipmi-btn:focus-visible {
 }
 
 a.ipmi-btn-kvm,
-a.btn-kvm {
+a.btn-kvm,
+span.btn-kvm {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -944,6 +945,21 @@ a.ipmi-btn-kvm:hover,
 a.btn-kvm:hover {
   transform: translateY(-1px);
   box-shadow: 0 6px 16px rgba(124, 58, 237, 0.35);
+}
+
+a.btn-kvm-available {
+  background: linear-gradient(180deg, #22c55e, #16a34a);
+}
+
+span.btn-kvm-unavailable {
+  background: linear-gradient(180deg, #64748b, #475569);
+  color: #e2e8f0 !important;
+  border-color: rgba(226, 232, 240, 0.2);
+}
+
+a.btn-kvm-unknown {
+  background: linear-gradient(180deg, #0ea5e9, #0369a1);
+  color: #fff !important;
 }
 
 .ipmi-link-action {

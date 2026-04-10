@@ -1021,6 +1021,65 @@ function ipmiWebProbeProxyFlowValidation(mysqli $mysqli, int $serverId, bool $e2
             ) {
                 return ['ok' => false, 'error' => 'proxy_ilo_session_api_invalid', 'checks' => $checks];
             }
+
+            // iLO KVM jnlp_template guard:
+            // Keep this endpoint pass-through (vendor-native flow) and avoid
+            // forcing legacy/unavailable redirects from proxy heuristics.
+            $proxyBase = ipmiWebProbeProxyBaseUrl() . '/ipmi_proxy.php/' . rawurlencode($token);
+            $kvmRef = $proxyBase . '/html/application.html?ipmi_kvm_auto=1';
+            $iloJnlp = ipmiWebProbeFetchProxyPathWithMethod(
+                $token,
+                '/html/jnlp_template.html',
+                'GET',
+                null,
+                ['Referer: ' . $kvmRef]
+            );
+            $legacyRedirect = false;
+            $legacyQuerySeen = false;
+            $unavailableRedirect = false;
+            foreach (($iloJnlp['redirect_chain'] ?? []) as $hop) {
+                $loc = strtolower((string) ($hop['location'] ?? ''));
+                if ($loc === '') {
+                    continue;
+                }
+                if (str_contains($loc, 'ipmi_kvm_unavailable=1')) {
+                    $unavailableRedirect = true;
+                }
+                if (str_contains($loc, '/html/irc.application')) {
+                    $legacyRedirect = true;
+                    if (str_contains($loc, 'ipmi_kvm_legacy=1')) {
+                        $legacyQuerySeen = true;
+                    }
+                }
+            }
+            $finalUrlLower = strtolower((string) ($iloJnlp['final_url'] ?? ''));
+            if (str_contains($finalUrlLower, '/html/irc.application')) {
+                $legacyRedirect = true;
+            }
+            if (str_contains($finalUrlLower, 'ipmi_kvm_legacy=1')) {
+                $legacyQuerySeen = true;
+            }
+            if (str_contains($finalUrlLower, 'ipmi_kvm_unavailable=1')) {
+                $unavailableRedirect = true;
+            }
+            $checks[] = [
+                'kind' => 'proxy_ilo_kvm_fallback',
+                'path' => '/html/jnlp_template.html',
+                'http' => (int) ($iloJnlp['http'] ?? 0),
+                'raw_ok' => !empty($iloJnlp['raw_ok']),
+                'final_url' => (string) ($iloJnlp['final_url'] ?? ''),
+                'legacy_redirect' => $legacyRedirect,
+                'legacy_query' => $legacyQuerySeen,
+                'unavailable_redirect' => $unavailableRedirect,
+            ];
+            if (
+                empty($iloJnlp['raw_ok'])
+                || (int) ($iloJnlp['http'] ?? 0) >= 400
+                || (int) ($iloJnlp['http'] ?? 0) === 0
+                || $legacyRedirect
+            ) {
+                return ['ok' => false, 'error' => 'proxy_ilo_kvm_jnlp_invalid', 'checks' => $checks];
+            }
         }
         if ($e2e && ipmiWebNormalizeBmcType($bmcType) === 'idrac') {
             // iDRAC-specific loop guard:
@@ -1082,6 +1141,41 @@ function ipmiWebProbeProxyFlowValidation(mysqli $mysqli, int $serverId, bool $e2
                 ) {
                     return ['ok' => false, 'error' => 'proxy_idrac_session_api_invalid', 'checks' => $checks];
                 }
+            }
+        }
+        if ($e2e) {
+            $kvmPath = ipmiWebKvmConsolePath($probeSession);
+            $kvmRes = ipmiWebProbeFetchProxyPath($token, $kvmPath);
+            $kvmBody = (string) ($kvmRes['body'] ?? '');
+            $kvmLooksConsole = ipmiWebKvmPathLooksConsoleLike($kvmPath, $kvmBody);
+            $kvmUnavailable = ipmiWebKvmPathLooksUnavailable($kvmBody);
+            $checks[] = [
+                'kind' => 'proxy_kvm',
+                'path' => $kvmPath,
+                'http' => (int) ($kvmRes['http'] ?? 0),
+                'raw_ok' => !empty($kvmRes['raw_ok']),
+                'final_url' => (string) ($kvmRes['final_url'] ?? ''),
+                'login_page' => !empty($kvmRes['login_page']),
+                'timeout_text' => !empty($kvmRes['timeout_text']),
+                'timeout_shell' => !empty($kvmRes['timeout_shell']),
+                'proxy_expired' => !empty($kvmRes['proxy_expired']),
+                'looks_console_like' => $kvmLooksConsole,
+                'looks_unavailable' => $kvmUnavailable,
+                'body_bytes' => (int) ($kvmRes['body_bytes'] ?? 0),
+            ];
+            if (
+                empty($kvmRes['raw_ok'])
+                || (int) ($kvmRes['http'] ?? 0) >= 400
+                || (int) ($kvmRes['http'] ?? 0) === 0
+                || !empty($kvmRes['login_page'])
+                || !empty($kvmRes['timeout_text'])
+                || !empty($kvmRes['timeout_shell'])
+                || !empty($kvmRes['proxy_expired'])
+            ) {
+                return ['ok' => false, 'error' => 'proxy_kvm_invalid:' . $kvmPath, 'checks' => $checks];
+            }
+            if ($kvmUnavailable) {
+                return ['ok' => false, 'error' => 'proxy_kvm_unavailable:' . $kvmPath, 'checks' => $checks];
             }
         }
     } catch (Throwable $e) {

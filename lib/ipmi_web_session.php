@@ -3230,22 +3230,30 @@ function ipmiWebKvmConsolePath(array $session): string
         case 'supermicro':
             return ipmiWebPickReachablePath($session, [
                 '/cgi/url_redirect.cgi?url_name=ikvm&url_type=jwsk',
-                '/cgi/url_redirect.cgi?url_name=ikvm',
-                '/cgi/url_redirect.cgi?url_name=ikvm&url_type=java',
                 '/cgi/url_redirect.cgi?url_name=ikvm&url_type=html5',
-                '/cgi/url_redirect.cgi?url_name=topmenu',
-            ], '/cgi/url_redirect.cgi?url_name=topmenu');
+                '/cgi/url_redirect.cgi?url_name=ikvm',
+            ], '/cgi/url_redirect.cgi?url_name=topmenu&ipmi_kvm_unavailable=1', true);
         case 'ilo4':
+            $iloStandaloneHtml5 = ipmiWebIloSupportsStandaloneHtml5Kvm($session);
+            $iloAutoPath = $iloStandaloneHtml5
+                ? '/html/application.html?ipmi_kvm_auto=1&ipmi_kvm_force_html5=1'
+                : '/html/application.html?ipmi_kvm_auto=1';
+            $iloIndexAutoPath = $iloStandaloneHtml5
+                ? '/index.html?ipmi_kvm_auto=1&ipmi_kvm_force_html5=1'
+                : '/index.html?ipmi_kvm_auto=1';
             return ipmiWebPickReachablePath($session, [
-                '/html/IRC.html',
-                '/html/irc.html',
-                '/html/java_irc.html',
+                // Prefer proxy-driven autolaunch from application shell first.
+                // On many iLO4 builds this context has the HTML5 console JS loaded directly.
+                $iloAutoPath,
+                // Keep index-shell autolaunch as a secondary path for firmware variants.
+                $iloIndexAutoPath,
                 '/html/intgapp.html',
                 '/html/intgapp3.html',
+                '/html/IRC.html',
+                '/html/irc.html',
                 '/html/kvmsession.html',
                 '/html/iLO.html',
-                '/',
-            ], '/');
+            ], '/index.html?ipmi_kvm_unavailable=1', true);
         case 'idrac':
             return ipmiWebPickReachablePath($session, [
                 '/viewer.html',
@@ -3254,8 +3262,7 @@ function ipmiWebKvmConsolePath(array $session): string
                 '/index.html',
                 '/restgui/start.html',
                 '/restgui/launch',
-                '/',
-            ], '/');
+            ], '/index.html?ipmi_kvm_unavailable=1', true);
         default:
             return '/';
     }
@@ -3269,6 +3276,9 @@ function ipmiWebKvmConsoleUrl(array $session): string
 
 function ipmiWebKvmPathLooksConsoleLike(string $path, string $body): bool
 {
+    if (str_contains(strtolower($path), 'ipmi_kvm_auto=1')) {
+        return true;
+    }
     $p = strtolower((string) parse_url($path, PHP_URL_PATH));
     if ($p === '') {
         $p = strtolower($path);
@@ -3296,6 +3306,43 @@ function ipmiWebKvmPathLooksConsoleLike(string $path, string $body): bool
         || str_contains($sample, 'launch kvm');
 }
 
+function ipmiWebKvmDeliveryMode(string $path, string $contentType, string $body): string
+{
+    $p = strtolower((string) $path);
+    $ct = strtolower((string) $contentType);
+    $sample = strtolower(substr((string) $body, 0, 200000));
+    if (str_contains($p, 'ipmi_kvm_auto=1')) {
+        return 'proxy_autolaunch';
+    }
+    if (str_contains($ct, 'application/x-ms-application')) {
+        return 'clickonce';
+    }
+    if (str_contains($ct, 'application/x-java-jnlp-file')) {
+        return 'jnlp';
+    }
+    if (str_contains($p, 'java_irc') || str_contains($sample, 'applet-based console')) {
+        return 'java_applet';
+    }
+    if (str_contains($ct, 'text/html')) {
+        return 'html';
+    }
+
+    return 'other';
+}
+
+function ipmiWebIloSupportsStandaloneHtml5Kvm(array $session): bool
+{
+    // iLO4 true browser-native KVM is provided via /html/irc.html on supported firmware.
+    // If missing/unavailable, compatibility mode should allow legacy launcher fallback.
+    $probe = ipmiWebProbeKvmPath($session, '/html/irc.html');
+    $code = (int) ($probe['code'] ?? 0);
+
+    return !empty($probe['ok'])
+        && $code >= 200
+        && $code < 300
+        && empty($probe['unavailable']);
+}
+
 function ipmiWebKvmPathLooksUnavailable(string $body): bool
 {
     $sample = strtolower(substr((string) $body, 0, 200000));
@@ -3307,7 +3354,11 @@ function ipmiWebKvmPathLooksUnavailable(string $body): bool
         || str_contains($sample, 'cannot open remote control page')
         || str_contains($sample, 'ikvm server port')
         || str_contains($sample, 'remote control is disabled')
-        || str_contains($sample, 'console is disabled');
+        || str_contains($sample, 'console is disabled')
+        || str_contains($sample, 'applet-based console')
+        || str_contains($sample, 'requiring the availability of java')
+        || str_contains($sample, 'java integrated remote console')
+        || str_contains($sample, 'keep the current window open');
 }
 
 function ipmiWebKvmBodyHasTimeoutText(string $body): bool
@@ -3327,13 +3378,13 @@ function ipmiWebKvmBodyHasTimeoutText(string $body): bool
 /**
  * Lightweight KVM path probe against current authenticated BMC session.
  *
- * @return array{ok: bool, score: int, code: int, login: bool, timeout: bool, unavailable: bool}
+ * @return array{ok: bool, score: int, code: int, login: bool, timeout: bool, unavailable: bool, mode: string}
  */
 function ipmiWebProbeKvmPath(array $session, string $path): array
 {
     $ip = trim((string) ($session['ipmi_ip'] ?? ''));
     if ($ip === '') {
-        return ['ok' => false, 'score' => -1000, 'code' => 0, 'login' => false, 'timeout' => false, 'unavailable' => false];
+        return ['ok' => false, 'score' => -1000, 'code' => 0, 'login' => false, 'timeout' => false, 'unavailable' => false, 'mode' => 'other'];
     }
 
     $scheme = (($session['bmc_scheme'] ?? 'https') === 'http') ? 'http' : 'https';
@@ -3408,6 +3459,7 @@ function ipmiWebProbeKvmPath(array $session, string $path): array
     $login = ipmiWebResponseLooksLikeBmcLoginPage($body, $contentType);
     $timeout = ipmiWebKvmBodyHasTimeoutText($body);
     $unavailable = ipmiWebKvmPathLooksUnavailable($body);
+    $mode = ipmiWebKvmDeliveryMode($path, $contentType, $body);
     $ok = ($code >= 200 && $code < 400) && !$login && !$timeout;
 
     $score = 0;
@@ -3417,8 +3469,19 @@ function ipmiWebProbeKvmPath(array $session, string $path): array
     if (ipmiWebKvmPathLooksConsoleLike($path, $body)) {
         $score += 30;
     }
+    if ($mode === 'proxy_autolaunch') {
+        // Best UX for browsers: we stay in authenticated shell and trigger vendor JS launch.
+        $score += 60;
+    }
+    if ($mode === 'html') {
+        $score += 5;
+    }
+    if ($mode === 'clickonce' || $mode === 'jnlp' || $mode === 'java_applet') {
+        // Valid legacy delivery, but weak for modern browser-only workflows.
+        $score -= 90;
+    }
     if ($unavailable) {
-        $score -= 60;
+        $score -= 140;
     }
     if ($code >= 400 || $code === 0) {
         $score -= 80;
@@ -3434,30 +3497,48 @@ function ipmiWebProbeKvmPath(array $session, string $path): array
         'login' => $login,
         'timeout' => $timeout,
         'unavailable' => $unavailable,
+        'mode' => $mode,
     ];
 }
 
-function ipmiWebPickReachablePath(array $session, array $candidates, string $fallback): string
+function ipmiWebKvmModeIsBrowserNative(string $mode): bool
+{
+    return in_array($mode, ['proxy_autolaunch', 'html'], true);
+}
+
+function ipmiWebPickReachablePath(array $session, array $candidates, string $fallback, bool $browserOnly = false): string
 {
     $bestPath = $fallback;
     $bestScore = -100000;
+    $bestBrowserPath = '';
+    $bestBrowserScore = -100000;
     foreach ($candidates as $path) {
         $probe = ipmiWebProbeKvmPath($session, $path);
-        if (!empty($probe['ok']) && !empty($probe['unavailable']) && $bestScore < 10) {
-            // Console endpoint is reachable but disabled by vendor policy; keep best effort path.
-            $bestPath = $path;
-            $bestScore = 10;
-            continue;
-        }
         $score = (int) ($probe['score'] ?? -1000);
         if ($score > $bestScore) {
             $bestScore = $score;
             $bestPath = $path;
         }
-        if (!empty($probe['ok']) && $score >= 45) {
+        $isBrowserMode = ipmiWebKvmModeIsBrowserNative((string) ($probe['mode'] ?? 'other'));
+        if ($browserOnly && !empty($probe['ok']) && empty($probe['unavailable']) && $isBrowserMode && $score >= 35) {
+            if ($score > $bestBrowserScore) {
+                $bestBrowserScore = $score;
+                $bestBrowserPath = $path;
+            }
+            // Good browser-native console hit; no need to keep probing.
+            return $path;
+        }
+        if (!$browserOnly && !empty($probe['ok']) && empty($probe['unavailable']) && $score >= 35) {
             // Good console-like hit; no need to keep probing.
             return $path;
         }
+    }
+
+    if ($browserOnly && $bestBrowserPath !== '') {
+        return $bestBrowserPath;
+    }
+    if ($browserOnly) {
+        return $fallback;
     }
 
     return $bestPath;

@@ -125,6 +125,12 @@ function ipmiProxyRewriteIloRootRelative(string $body, string $token): string
         '/html/',
         '/themes/', // iLO 4 classic UI CSS bundles (e.g. /themes/hpe/css/...)
         '/sse/', // iLO 5/6 UI event stream (e.g. /sse/ui)
+        '/java/', // legacy Java console payloads
+        '/Java/', // Supermicro/older BMC java payloads are often uppercase path
+        '/viewer/', // iDRAC console route family
+        '/console/', // vendor console routes
+        '/kvm/', // vendor kvm assets
+        '/avct/', // iDRAC console assets
         '/favicon.ico', // often requested at site root; must route through proxy
     ];
     $pairs = [];
@@ -139,6 +145,18 @@ function ipmiProxyRewriteIloRootRelative(string $body, string $token): string
         $body = str_replace($from, $to, $body);
     }
     return $body;
+}
+
+function ipmiProxyInjectIntoHtmlHeadOrBody(string $html, string $snippet): string
+{
+    if (stripos($html, '<head') !== false) {
+        return preg_replace('/<head(\s[^>]*)?>/i', '$0' . $snippet, $html, 1) ?? $html;
+    }
+    if (stripos($html, '</body>') !== false) {
+        return preg_replace('~</body>~i', $snippet . '</body>', $html, 1) ?? ($html . $snippet);
+    }
+
+    return $html . $snippet;
 }
 
 /**
@@ -223,7 +241,7 @@ function ipmiProxyInjectIloHeadFixes(string $html, string $token, ?string $redfi
         . 'if(s.indexOf("session has timed out")>=0||s.indexOf("session timed out")>=0||s.indexOf("session is running")>=0||s.indexOf("already a session")>=0){return;}'
         . '}catch(e){}return _a.apply(this,arguments);};}catch(e){}'
         . 'var P=' . $pxJs . ';var A=' . $xJs . ';var H=' . $hostsJs . ';'
-        . 'var R=["/redfish/v1/","/redfish/","/rest/v1/","/rest/","/restapi/","/js/","/css/","/fonts/","/img/","/images/","/json/","/api/","/html/","/themes/","/sse/","/cgi/","/favicon.ico"];'
+        . 'var R=["/redfish/v1/","/redfish/","/rest/v1/","/rest/","/restapi/","/js/","/css/","/fonts/","/img/","/images/","/json/","/api/","/html/","/themes/","/sse/","/cgi/","/java/","/Java/","/viewer/","/console/","/kvm/","/avct/","/favicon.ico"];'
         . 'var L=location;var po=L.protocol+"//"+L.host;'
         . 'function iH(h){if(!h)return false;h=String(h).toLowerCase();for(var i=0;i<H.length;i++){if(H[i]&&String(H[i]).toLowerCase()===h)return true;}return false;}'
         . 'function sp(s){if(typeof s!=="string"||s.indexOf(P)===0)return false;for(var i=0;i<R.length;i++){if(s.indexOf(R[i])===0)return true;}return false;}'
@@ -271,7 +289,7 @@ function ipmiProxyInjectIloHeadFixes(string $html, string $token, ?string $redfi
     // Do not inject <base href>: iLO pages mix root-relative (/js/...) and sibling-relative
     // (jquery.translate.js) URLs; a single base breaks the latter into /TOKEN/jquery... (400).
 
-    return preg_replace('/<head(\s[^>]*)?>/i', '$0' . $patch, $html, 1) ?? $html;
+    return ipmiProxyInjectIntoHtmlHeadOrBody($html, $patch);
 }
 
 function ipmiProxyIsIloFamily(string $bmcType): bool
@@ -340,7 +358,7 @@ function ipmiProxyInjectGenericHeadFixes(
         . 'if(s.indexOf("session has timed out")>=0||s.indexOf("session timed out")>=0||s.indexOf("session is running")>=0||s.indexOf("already a session")>=0){return;}'
         . '}catch(e){}return _a.apply(this,arguments);};}catch(e){}'
         . 'var P=' . $pxJs . ';var A=' . $authJs . ';var C=' . $csrfJs . ';var H=' . $hostsJs . ';'
-        . 'var R=["/redfish/v1/","/redfish/","/rest/v1/","/rest/","/restapi/","/session","/data/","/rpc/","/js/","/css/","/fonts/","/img/","/images/","/json/","/api/","/html/","/themes/","/sse/","/cgi/","/res/","/favicon.ico"];'
+        . 'var R=["/redfish/v1/","/redfish/","/rest/v1/","/rest/","/restapi/","/session","/data/","/rpc/","/js/","/css/","/fonts/","/img/","/images/","/json/","/api/","/html/","/themes/","/sse/","/cgi/","/res/","/java/","/Java/","/viewer/","/console/","/kvm/","/avct/","/favicon.ico"];'
         . 'var L=location;var po=L.protocol+"//"+L.host;'
         . 'var F=' . $forceSm . ';'
         . 'var D=' . $disableHashRedirect . ';'
@@ -394,7 +412,186 @@ function ipmiProxyInjectGenericHeadFixes(
         . '}catch(e8){}'
         . '})();</script>';
 
-    return preg_replace('/<head(\s[^>]*)?>/i', '$0' . $patch, $html, 1) ?? $html;
+    return ipmiProxyInjectIntoHtmlHeadOrBody($html, $patch);
+}
+
+function ipmiProxyInjectKvmAutoLaunchPatch(string $html, string $token, string $bmcType, bool $kvmAutoFlow = false): string
+{
+    if (stripos($html, 'data-ipmi-proxy-kvm-autolaunch') !== false) {
+        return $html;
+    }
+    $type = ipmiWebNormalizeBmcType($bmcType);
+    $typeJs = json_encode($type, JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_UNESCAPED_SLASHES);
+    $px = '/ipmi_proxy.php/' . rawurlencode($token);
+    $pxJs = json_encode($px, JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_UNESCAPED_SLASHES);
+    $autoJs = $kvmAutoFlow ? 'true' : 'false';
+    $patch = '<script data-ipmi-proxy-kvm-autolaunch="1">'
+        . '(function(){'
+        . 'var T=' . $typeJs . ';var P=' . $pxJs . ';var AUTO=' . $autoJs . ';'
+        . 'var q=null;try{q=new URLSearchParams(location.search||"");}catch(e){q=null;}'
+        . 'var queryAuto=(q&&q.get("ipmi_kvm_auto")==="1");'
+        . 'try{if(queryAuto&&window.sessionStorage){sessionStorage.setItem("_ipmi_kvm_auto_flow","1");sessionStorage.removeItem("_ipmi_kvm_autolaunch_done");sessionStorage.removeItem("_ipmi_kvm_app_redirected");}}catch(_e0){}'
+        . 'var flowActive=false;'
+        . 'try{flowActive=queryAuto||AUTO||(window.sessionStorage&&sessionStorage.getItem("_ipmi_kvm_auto_flow")==="1");}catch(_e1){flowActive=queryAuto||AUTO;}'
+        . 'if(!flowActive){return;}'
+        . 'var launchDone=false;'
+        . 'try{launchDone=!!(window.sessionStorage&&sessionStorage.getItem("_ipmi_kvm_autolaunch_done")==="1");}catch(_e2){launchDone=false;}'
+        . 'function go(p){try{location.href=P+p;}catch(e){}}'
+        . 'function pathLower(){try{return String(location.pathname||"").toLowerCase();}catch(e){return"";}}'
+        . 'function markDone(){try{if(window.sessionStorage){sessionStorage.setItem("_ipmi_kvm_autolaunch_done","1");}}catch(e){}}'
+        . 'function markAppRedirected(){try{if(window.sessionStorage){sessionStorage.setItem("_ipmi_kvm_app_redirected","1");}}catch(e){}}'
+        . 'function wasAppRedirected(){try{return !!(window.sessionStorage&&sessionStorage.getItem("_ipmi_kvm_app_redirected")==="1");}catch(e){return false;}}'
+        . 'function forceSameTabOpen(ctx){try{'
+        . 'if(!ctx||!ctx.open||ctx.__ipmi_kvm_open_patched)return;'
+        . 'var ow=ctx.open.bind(ctx);'
+        . 'ctx.open=function(u,n,f){try{if(typeof u==="string"&&u!==""){ctx.location.href=u;return ctx;}}catch(_e0){}return ow(u,n,f);};'
+        . 'ctx.__ipmi_kvm_open_patched=true;'
+        . '}catch(e){}}'
+        . 'function fnSrc(fn){try{return Function.prototype.toString.call(fn);}catch(e){return"";}}'
+        . 'function isRendererStartFn(fn){var s=fnSrc(fn);if(!s)return false;return s.indexOf("new Renderer")!==-1||s.indexOf("renderer = new Renderer")!==-1||s.indexOf("htmlIrcWindowMode")!==-1;}'
+        . 'function isWrapperStartFn(fn){var s=fnSrc(fn);if(!s)return false;return s.indexOf("iLO.startHtml5Irc")!==-1&&s.indexOf("new Renderer")===-1;}'
+        . 'function hasIloRendererHost(ctx){try{'
+        . 'if(!ctx)return false;'
+        . 'if(isRendererStartFn(ctx.startHtml5Irc))return true;'
+        . 'if(ctx.document&&ctx.document.getElementById&&ctx.document.getElementById("ircWindow"))return true;'
+        . '}catch(e){}return false;}'
+        . 'function findIloRendererHost(ctx){'
+        . 'var out=[];'
+        . 'function add(c){if(!c)return;for(var i=0;i<out.length;i++){if(out[i]===c)return;}out.push(c);}'
+        . 'try{add(ctx);}catch(e0){}'
+        . 'try{if(ctx&&ctx.parent&&ctx.parent!==ctx)add(ctx.parent);}catch(e1){}'
+        . 'try{if(ctx&&ctx.parent&&ctx.parent.parent&&ctx.parent.parent!==ctx.parent)add(ctx.parent.parent);}catch(e2){}'
+        . 'try{if(ctx&&ctx.top&&ctx.top!==ctx)add(ctx.top);}catch(e3){}'
+        . 'try{if(ctx&&ctx.top&&ctx.top.frames&&ctx.top.frames.appFrame)add(ctx.top.frames.appFrame);}catch(e4){}'
+        . 'for(var j=0;j<out.length;j++){if(hasIloRendererHost(out[j]))return out[j];}'
+        . 'for(var k=0;k<out.length;k++){try{if(out[k]&&out[k].frameDirectory&&out[k].frameContent){return out[k];}}catch(_e5){}}'
+        . 'return ctx||null;'
+        . '}'
+        . 'function bindIloTopPage(ctx){try{'
+        . 'if(!ctx)return null;'
+        . 'var host=findIloRendererHost(ctx)||ctx;'
+        . 'if(ctx.iLOGlobal){ctx.iLOGlobal.topPage=host;}'
+        . 'if(host&&host.iLOGlobal){host.iLOGlobal.topPage=host;}'
+        . 'if(ctx.iLOGlobal&&ctx.iLOGlobal.topPage){ctx.iLOGlobal.topPage.appFrame=host;}'
+        . 'if(host&&host.iLOGlobal&&host.iLOGlobal.topPage){host.iLOGlobal.topPage.appFrame=host;}'
+        . 'return host;'
+        . '}catch(e){return ctx||null;}}'
+        . 'function ensureIloStartPatched(ctx){try{'
+        . 'if(!ctx||!ctx.iLO||typeof ctx.iLO.startHtml5Irc!=="function"||ctx.iLO.__ipmi_start_patched){return;}'
+        . 'ctx.iLO.__ipmi_start_orig=ctx.iLO.startHtml5Irc;'
+        . 'ctx.iLO.startHtml5Irc=function(){try{'
+        . 'try{if(ctx.iLO&&typeof ctx.iLO.setCookie==="function"){ctx.iLO.setCookie("irc",["last","html5"]);}}catch(_c0){}'
+        . 'var host=bindIloTopPage(ctx)||findIloRendererHost(ctx)||ctx;'
+        . 'if(host){forceSameTabOpen(host);'
+        . 'if(isRendererStartFn(host.startHtml5Irc)){try{host.startHtml5Irc({mode:"WINDOW"});return;}catch(_e1){}try{host.startHtml5Irc();return;}catch(_e2){}}'
+        . '}'
+        . 'var orig=ctx.iLO.__ipmi_start_orig;'
+        . 'if(orig&&orig!==ctx.iLO.startHtml5Irc){try{return orig.apply(ctx.iLO,arguments);}catch(_e3){}}'
+        . '}catch(_e0){}'
+        . '};'
+        . 'ctx.iLO.__ipmi_start_patched=true;'
+        . '}catch(e){}}'
+        . 'function isShown(node){try{return !!(node&&node.offsetParent!==null);}catch(e){return false;}}'
+        . 'function consoleVisible(ctx){try{'
+        . 'if(!ctx)return false;'
+        . 'if(ctx.renderer&&ctx.renderer.connected===true)return true;'
+        . '}catch(e){}return false;}'
+        . 'function wireIloAppFrame(ctx){try{'
+        . 'if(!ctx)return;'
+        . 'var host=bindIloTopPage(ctx)||ctx;'
+        . 'if(host&&host.iLOGlobal&&host.iLOGlobal.topPage){host.iLOGlobal.topPage.appFrame=host;}'
+        . '}catch(e){}}'
+        . 'function callIloStart(ctx){'
+        . 'if(!ctx)return false;'
+        . 'var host=bindIloTopPage(ctx)||findIloRendererHost(ctx)||ctx;'
+        . 'ensureIloStartPatched(ctx);'
+        . 'if(host&&host!==ctx){ensureIloStartPatched(host);}'
+        . 'wireIloAppFrame(host||ctx);'
+        . 'try{if(host&&host.iLO&&typeof host.iLO.startHtml5Irc==="function"){host.iLO.startHtml5Irc();return true;}}catch(e0){}'
+        . 'try{if(ctx.iLO&&typeof ctx.iLO.startHtml5Irc==="function"){ctx.iLO.startHtml5Irc();return true;}}catch(e1){}'
+        . 'return false;}'
+        . 'function callStart(ctx){'
+        . 'if(!ctx)return false;'
+        . 'var host=findIloRendererHost(ctx)||bindIloTopPage(ctx)||ctx;'
+        . 'if(host&&isRendererStartFn(host.startHtml5Irc)){'
+        . 'try{host.startHtml5Irc({mode:"WINDOW"});return true;}catch(e1){}'
+        . 'try{host.startHtml5Irc();return true;}catch(e2){}'
+        . '}'
+        . 'return false;}'
+        . 'function clickHtml5Anchor(ctx){try{'
+        . 'if(!ctx||!ctx.document||!ctx.document.querySelector)return false;'
+        . 'var a=ctx.document.querySelector("#html5_irc_label a");'
+        . 'if(!a)return false;'
+        . 'if(typeof a.click==="function"){a.click();return true;}'
+        . 'if(ctx.document.createEvent){var ev=ctx.document.createEvent("MouseEvents");ev.initEvent("click",true,true);a.dispatchEvent(ev);return true;}'
+        . '}catch(e){}return false;}'
+        . 'function collectContexts(){'
+        . 'var out=[];'
+        . 'function add(c){if(!c)return;for(var i=0;i<out.length;i++){if(out[i]===c)return;}out.push(c);}'
+        . 'try{add(window);}catch(e0){}'
+        . 'try{if(window.parent&&window.parent!==window)add(window.parent);}catch(e1){}'
+        . 'try{if(window.parent&&window.parent.parent&&window.parent.parent!==window.parent)add(window.parent.parent);}catch(e1b){}'
+        . 'try{if(window.top&&window.top!==window)add(window.top);}catch(e2){}'
+        . 'try{if(window.top&&window.top.frames&&window.top.frames.appFrame)add(window.top.frames.appFrame);}catch(e2b){}'
+        . 'try{if(window.frames&&window.frames.frameContent)add(window.frames.frameContent);}catch(e3){}'
+        . 'try{if(window.frames&&window.frames.frameContent&&window.frames.frameContent.frames&&window.frames.frameContent.frames.iframeContent){add(window.frames.frameContent.frames.iframeContent);}}catch(e4){}'
+        . 'try{if(window.parent&&window.parent.frames&&window.parent.frames.frameContent)add(window.parent.frames.frameContent);}catch(e5){}'
+        . 'try{if(window.parent&&window.parent.frames&&window.parent.frames.frameContent&&window.parent.frames.frameContent.frames&&window.parent.frames.frameContent.frames.iframeContent){add(window.parent.frames.frameContent.frames.iframeContent);}}catch(e6){}'
+        . 'return out;}'
+        . 'if(launchDone&&!queryAuto){'
+        . 'var c0=collectContexts(),ok0=false;'
+        . 'for(var z=0;z<c0.length;z++){if(consoleVisible(c0[z])){ok0=true;break;}}'
+        . 'if(!ok0){try{if(window.sessionStorage){sessionStorage.removeItem("_ipmi_kvm_autolaunch_done");}}catch(_e2b){} launchDone=false;}'
+        . 'if(launchDone){return;}'
+        . '}'
+        . 'if(T==="ilo4"){'
+        . 'var pl=pathLower();'
+        . 'if((pl==="/"||pl.indexOf("/index.html")!==-1)&&!wasAppRedirected()){markAppRedirected();go("/html/application.html?ipmi_kvm_auto=1&ipmi_kvm_stage=app");return;}'
+        . 'var n=0,max=220;'
+        . '(function tick(){'
+        . 'n++;'
+        . 'var ctx=collectContexts();'
+        . 'for(var i=0;i<ctx.length;i++){forceSameTabOpen(ctx[i]);ensureIloStartPatched(ctx[i]);wireIloAppFrame(ctx[i]);if(consoleVisible(ctx[i])){markDone();return;}}'
+        . 'if(n===1||(n%3===0)){'
+        . 'var started=false;'
+        . 'for(var h=0;h<ctx.length;h++){if(callIloStart(ctx[h])){started=true;}}'
+        . 'for(var k=0;k<ctx.length;k++){if(callStart(ctx[k])){started=true;}}'
+        . '}'
+        . 'for(var m=0;m<ctx.length;m++){if(consoleVisible(ctx[m])){markDone();return;}}'
+        . 'if(n<max){setTimeout(tick,250);return;}'
+        . 'var pnow=pathLower();'
+        . 'if(pnow.indexOf("/html/application.html")===-1&&pnow.indexOf("/html/summary.html")===-1&&!wasAppRedirected()){markAppRedirected();go("/html/application.html?ipmi_kvm_auto=1&ipmi_kvm_stage=app");return;}'
+        . '})();'
+        . 'return;'
+        . '}'
+        . 'if(T==="idrac"){go("/viewer.html");return;}'
+        . 'if(T==="supermicro"){go("/cgi/url_redirect.cgi?url_name=ikvm&url_type=jwsk");return;}'
+        . '})();</script>';
+
+    return ipmiProxyInjectIntoHtmlHeadOrBody($html, $patch);
+}
+
+function ipmiProxyInjectKvmUnavailableHint(string $html): string
+{
+    if (stripos($html, 'data-ipmi-proxy-kvm-unavailable') !== false) {
+        return $html;
+    }
+    $patch = '<script data-ipmi-proxy-kvm-unavailable="1">'
+        . '(function(){try{'
+        . 'if(!document||!document.body)return;'
+        . 'var q=new URLSearchParams(location.search||"");'
+        . 'var hasFlag=(q.get("ipmi_kvm_unavailable")==="1");'
+        . 'var existing=document.getElementById("ipmi-kvm-unavailable-banner");'
+        . 'if(!hasFlag){if(existing&&existing.parentNode){existing.parentNode.removeChild(existing);}return;}'
+        . 'if(existing)return;'
+        . 'var d=document.createElement("div");d.id="ipmi-kvm-unavailable-banner";'
+        . 'd.style.cssText="position:fixed;z-index:2147483647;right:14px;top:14px;max-width:540px;background:#102546;color:#d8e9ff;border:1px solid #2a4a76;border-radius:10px;padding:12px 14px;font:13px/1.45 Arial,sans-serif;box-shadow:0 8px 22px rgba(0,0,0,.35);opacity:1;transition:opacity .22s ease";'
+        . 'd.textContent="KVM is currently unavailable in browser-native mode for this server/firmware. You can still use regular IPMI session features from this page.";'
+        . 'document.body.appendChild(d);'
+        . 'setTimeout(function(){try{d.style.opacity="0";setTimeout(function(){if(d&&d.parentNode){d.parentNode.removeChild(d);}},260);}catch(_e){}},9000);'
+        . '}catch(e){}})();</script>';
+
+    return ipmiProxyInjectIntoHtmlHeadOrBody($html, $patch);
 }
 
 function ipmiProxyExtractIloAuthToken(array $cookies, array $forwardHeaders): string
@@ -462,6 +659,18 @@ function ipmiProxyRewriteBmcResponseBody(string $body, string $bmcIp, string $to
         || strpos($body, '"\\/api\\/') !== false
         || strpos($body, '"/html/') !== false
         || strpos($body, '"\\/html\\/') !== false
+        || strpos($body, '"/java/') !== false
+        || strpos($body, '"\\/java\\/') !== false
+        || strpos($body, '"/Java/') !== false
+        || strpos($body, '"\\/Java\\/') !== false
+        || strpos($body, '"/viewer/') !== false
+        || strpos($body, '"\\/viewer\\/') !== false
+        || strpos($body, '"/console/') !== false
+        || strpos($body, '"\\/console\\/') !== false
+        || strpos($body, '"/kvm/') !== false
+        || strpos($body, '"\\/kvm\\/') !== false
+        || strpos($body, '"/avct/') !== false
+        || strpos($body, '"\\/avct\\/') !== false
         || strpos($body, '"/favicon.ico') !== false
         || strpos($body, '"\\/favicon.ico') !== false
         || strpos($body, '"/themes/') !== false
@@ -715,6 +924,26 @@ setcookie('IPMI_PROXY_TOKEN', $token, [
     'samesite' => 'Lax',
 ]);
 
+$kvmCookiePath = '/ipmi_proxy.php/' . rawurlencode($token);
+if ((string) ($_GET['ipmi_kvm_auto'] ?? '') === '1') {
+    setcookie('IPMI_KVM_AUTO', '1', [
+        'expires'  => time() + 600,
+        'path'     => $kvmCookiePath,
+        'secure'   => $secureTokenCookie,
+        'httponly' => true,
+        'samesite' => 'Lax',
+    ]);
+}
+if ((string) ($_GET['ipmi_kvm_legacy'] ?? '') === '1') {
+    setcookie('IPMI_KVM_LEGACY', '1', [
+        'expires'  => time() + 1200,
+        'path'     => $kvmCookiePath,
+        'secure'   => $secureTokenCookie,
+        'httponly' => true,
+        'samesite' => 'Lax',
+    ]);
+}
+
 $panelUserId = null;
 // Avoid overwriting the main panel session cookie when the browser opens the proxy
 // without a valid PHPSESSID (e.g. different scheme or new tab).
@@ -925,6 +1154,9 @@ if (ipmiProxyDebugEnabled()) {
         'bmcType'   => (string) ($session['bmc_type'] ?? ''),
         'bmcScheme' => $bmcScheme,
         'hasQuery'  => $queryString !== '',
+        'kvmAuto'   => ((string) ($_GET['ipmi_kvm_auto'] ?? '') === '1') ? 1 : 0,
+        'kvmLegacy' => ((string) ($_GET['ipmi_kvm_legacy'] ?? '') === '1') ? 1 : 0,
+        'referer'   => substr((string) ($_SERVER['HTTP_REFERER'] ?? ''), 0, 180),
         'cookies'   => ipmiProxyDebugCookieMeta(is_array($session['cookies'] ?? null) ? $session['cookies'] : []),
     ]);
 }
@@ -1158,6 +1390,51 @@ function ipmiProxyBodyLooksLikeSupermicroApiAuthFailure(string $body): bool
     return false;
 }
 
+function ipmiProxyBodyLooksLikeJavaOnlyIloConsole(string $body): bool
+{
+    if ($body === '') {
+        return false;
+    }
+    $sample = strtolower(substr((string) $body, 0, 200000));
+    if ($sample === '') {
+        return false;
+    }
+
+    return str_contains($sample, 'java integrated remote console')
+        && str_contains($sample, 'applet-based console')
+        && str_contains($sample, 'requiring the availability of java');
+}
+
+function ipmiProxyBodyLooksLikeIloHtml5ConsoleUnavailable(string $body): bool
+{
+    if ($body === '') {
+        return false;
+    }
+    $sample = strtolower(substr((string) $body, 0, 200000));
+    if ($sample === '') {
+        return false;
+    }
+
+    return str_contains($sample, 'standalone html5 console not yet available')
+        || (str_contains($sample, 'html5 console') && str_contains($sample, 'not yet available'));
+}
+
+function ipmiProxyIsKvmAutoFlowRequest(): bool
+{
+    $autoQuery = ((string) ($_GET['ipmi_kvm_auto'] ?? '') === '1');
+    $legacyQuery = ((string) ($_GET['ipmi_kvm_legacy'] ?? '') === '1');
+    $autoCookie = ((string) ($_COOKIE['IPMI_KVM_AUTO'] ?? '') === '1');
+    $legacyCookie = ((string) ($_COOKIE['IPMI_KVM_LEGACY'] ?? '') === '1');
+    $ref = strtolower((string) ($_SERVER['HTTP_REFERER'] ?? ''));
+    $autoRef = str_contains($ref, 'ipmi_kvm_auto=1');
+    $legacyRef = str_contains($ref, 'ipmi_kvm_legacy=1');
+
+    $auto = $autoQuery || $autoCookie || $autoRef;
+    $legacy = $legacyQuery || $legacyCookie || $legacyRef;
+
+    return $auto && !$legacy;
+}
+
 function ipmiProxyLooksLikeLoginPath(string $bmcPath): bool
 {
     $p = strtolower((string) parse_url($bmcPath, PHP_URL_PATH));
@@ -1188,6 +1465,28 @@ function ipmiProxyEmitSessionExpiredPage(string $message = ''): void
     exit;
 }
 
+function ipmiProxyEmitKvmModeChoicePage(string $tokenPrefix, string $title, string $message): void
+{
+    http_response_code(200);
+    header('Content-Type: text/html; charset=utf-8');
+    header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
+    header('Pragma: no-cache');
+    $safeTitle = htmlspecialchars($title, ENT_QUOTES, 'UTF-8');
+    $safeMsg = htmlspecialchars($message, ENT_QUOTES, 'UTF-8');
+    $browserUrl = htmlspecialchars($tokenPrefix . '/html/application.html?ipmi_kvm_auto=1&ipmi_kvm_force_html5=1', ENT_QUOTES, 'UTF-8');
+    $dashUrl = htmlspecialchars($tokenPrefix . '/index.html', ENT_QUOTES, 'UTF-8');
+    echo '<!doctype html><html><head><meta charset="utf-8"><title>' . $safeTitle . '</title>'
+        . '<style>body{font-family:Arial,sans-serif;background:#0b1630;color:#dce6ff;margin:0;padding:28px}'
+        . '.card{max-width:860px;margin:28px auto;background:#1b2a47;border-radius:10px;padding:24px;border:1px solid #2b3d60}'
+        . '.btn{display:inline-block;margin:10px 10px 0 0;padding:10px 14px;border-radius:7px;background:#22477a;color:#fff;text-decoration:none}'
+        . '.btn-alt{background:#2f5f2f}.btn-low{background:#3b3f58}</style></head><body>'
+        . '<div class="card"><h2 style="margin-top:0">' . $safeTitle . '</h2><p>' . $safeMsg . '</p>'
+        . '<a class="btn btn-alt" href="' . $browserUrl . '">Try Browser HTML5 Console</a>'
+        . '<a class="btn btn-low" href="' . $dashUrl . '">Back to iLO Dashboard</a>'
+        . '</div></body></html>';
+    exit;
+}
+
 function ipmiProxyIsBmcStaticAssetPath(string $bmcPath): bool
 {
     $p = strtolower((string) parse_url($bmcPath, PHP_URL_PATH));
@@ -1200,7 +1499,7 @@ function ipmiProxyIsBmcStaticAssetPath(string $bmcPath): bool
         }
     }
 
-    return (bool) preg_match('/\.(?:js|css|png|svg|jpg|jpeg|gif|webp|ico|woff2?|ttf|eot|map)$/', $p);
+    return (bool) preg_match('/\.(?:js|css|png|svg|jpg|jpeg|gif|webp|ico|woff2?|ttf|eot|map|jar|jnlp|class|cab)$/', $p);
 }
 
 /**
@@ -1845,6 +2144,24 @@ if ($method === 'GET' && ipmiProxyShouldStreamBmcRequest($method, $bmcPath)) {
     exit;
 }
 
+if (
+    $method === 'GET'
+    && $typeNorm === 'ilo4'
+    && strtolower((string) parse_url($bmcPath, PHP_URL_PATH)) === '/html/application.html'
+    && (string) ($_GET['ipmi_kvm_auto'] ?? '') === '1'
+    && (string) ($_GET['ipmi_kvm_legacy'] ?? '') !== '1'
+) {
+    // Do not pre-block by jnlp_template heuristics.
+    // Real HTML5 capability must be decided by runtime launch path.
+    $forceHtml5 = ((string) ($_GET['ipmi_kvm_force_html5'] ?? '') === '1');
+    if (ipmiProxyDebugEnabled() && $forceHtml5) {
+        ipmiProxyDebugLog('ilo_kvm_force_html5', [
+            'trace' => $ipmiTraceId,
+            'from' => $bmcPath,
+        ]);
+    }
+}
+
 $result = ipmiProxyExecute($bmcUrl, $method, $postBody, $fwdContentType, $session['cookies'], is_array($fwdHdr) ? $fwdHdr : [], $bmcIp);
 
 // Core JS/CSS/image assets must be resilient. If transport failed, retry once.
@@ -2036,6 +2353,40 @@ $isHtml = ($ct === '' || $ct === 'text/html' || strpos($ct, 'html') !== false ||
 $isJs = ($ct === 'application/javascript' || $ct === 'text/javascript');
 $isCss = ($ct === 'text/css');
 $isJson = (strpos($ct, 'json') !== false);
+
+if (
+    $method === 'GET'
+    && $httpCode === 200
+    && $isHtml
+    && ipmiWebNormalizeBmcType((string) ($session['bmc_type'] ?? 'generic')) === 'ilo4'
+    && strtolower((string) parse_url($bmcPath, PHP_URL_PATH)) === '/html/java_irc.html'
+    && ipmiProxyBodyLooksLikeJavaOnlyIloConsole($responseBody)
+) {
+    if (ipmiProxyDebugEnabled()) {
+        ipmiProxyDebugLog('ilo_java_irc_detected', [
+            'trace' => $ipmiTraceId,
+            'bmcPath' => $bmcPath,
+            'kvmAutoFlow' => ipmiProxyIsKvmAutoFlowRequest() ? 1 : 0,
+        ]);
+    }
+}
+
+if (
+    $method === 'GET'
+    && $httpCode === 200
+    && $isHtml
+    && ipmiWebNormalizeBmcType((string) ($session['bmc_type'] ?? 'generic')) === 'ilo4'
+    && strtolower((string) parse_url($bmcPath, PHP_URL_PATH)) === '/html/jnlp_template.html'
+) {
+    if (ipmiProxyDebugEnabled()) {
+        ipmiProxyDebugLog('ilo_jnlp_template_detected', [
+            'trace' => $ipmiTraceId,
+            'bmcPath' => $bmcPath,
+            'fromKvmAutoFlow' => ipmiProxyIsKvmAutoFlowRequest() ? 1 : 0,
+            'looksUnavailable' => ipmiProxyBodyLooksLikeIloHtml5ConsoleUnavailable($responseBody) ? 1 : 0,
+        ]);
+    }
+}
 
 // HTML/login/timeout shell: session cookie is stale or session create-time login failed.
 $looksLikeLoginPage = ipmiWebResponseLooksLikeBmcLoginPage($responseBody, $contentTypeResp);
@@ -2785,7 +3136,10 @@ if ($rewriteBody) {
                 $xAuthForPatch,
                 $bmcIp
             );
-        } elseif ($authOkHtml && $httpCode >= 200 && $httpCode < 400) {
+        } else {
+            $shouldInjectGenericPatch = $httpCode >= 200 && $httpCode < 400
+                && ($authOkHtml || in_array($typeNorm, ['supermicro', 'ami', 'idrac'], true));
+            if ($shouldInjectGenericPatch) {
             $genericAuth = ipmiProxyExtractIloAuthToken($scMirror, $shMirror);
             $csrfHeader = '';
             foreach (['X-CSRFTOKEN', 'X-CSRF-Token', 'X-Csrf-Token', 'X-CSRFToken'] as $hk) {
@@ -2803,6 +3157,40 @@ if ($rewriteBody) {
                 $typeNorm === 'supermicro',
                 $typeNorm === 'ami'
             );
+            }
+        }
+        $kvmAutoPath = strtolower((string) parse_url($bmcPath, PHP_URL_PATH));
+        $kvmAutoFlow = ipmiProxyIsKvmAutoFlowRequest();
+        $shouldInjectKvmAutoPatch = ($httpCode >= 200 && $httpCode < 400)
+            && ipmiWebNormalizeBmcType($bmcTypeStr) === 'ilo4'
+            && in_array($kvmAutoPath, ['/', '/index.html', '/html/application.html', '/html/summary.html', '/html/irc.html'], true);
+        if ($shouldInjectKvmAutoPatch) {
+            $responseBody = ipmiProxyInjectKvmAutoLaunchPatch($responseBody, $token, $bmcTypeStr, $kvmAutoFlow);
+            if (ipmiProxyDebugEnabled()) {
+                ipmiProxyDebugLog('kvm_autolaunch_patch_injected', [
+                    'trace' => $ipmiTraceId,
+                    'bmcPath' => $bmcPath,
+                    'bmcType' => $bmcTypeStr,
+                    'kvmAutoFlow' => $kvmAutoFlow ? 1 : 0,
+                ]);
+            }
+        }
+        // Inject this helper on all iLO HTML pages:
+        // it shows the unavailable banner only when query flag exists,
+        // and also removes stale banners left by in-page route changes.
+        $kvmHintPath = strtolower((string) parse_url($bmcPath, PHP_URL_PATH));
+        $shouldInjectKvmUnavailableHint = ($httpCode >= 200 && $httpCode < 400)
+            && ipmiWebNormalizeBmcType($bmcTypeStr) === 'ilo4'
+            && in_array($kvmHintPath, ['/', '/index.html', '/html/application.html', '/html/summary.html', '/html/irc.html'], true);
+        if ($shouldInjectKvmUnavailableHint) {
+            $responseBody = ipmiProxyInjectKvmUnavailableHint($responseBody);
+            if (ipmiProxyDebugEnabled()) {
+                ipmiProxyDebugLog('kvm_unavailable_hint_injected', [
+                    'trace' => $ipmiTraceId,
+                    'bmcPath' => $bmcPath,
+                    'bmcType' => $bmcTypeStr,
+                ]);
+            }
         }
         $injectIloPatch = $shouldInjectIloPatch;
     }
