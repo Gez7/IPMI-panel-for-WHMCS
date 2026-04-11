@@ -6,7 +6,7 @@
  * DB table: ipmi_web_sessions
  *   id, token, user_id, server_id, ipmi_ip, ipmi_user, ipmi_pass,
  *   bmc_type, bmc_cookies (JSON: flat cookie map, or {"_c":{...},"_h":{...},"_s":"http","_m":{...}}),
- *   _m holds small opaque session metadata (KVM plan cache, iLO preflight TTL) — not secrets.
+ *   _m holds small opaque session metadata (KVM plan cache, iLO preflight TTL, iLO SPA bootstrap state) — not secrets.
  *   created_ip, user_agent,
  *   created_at, expires_at, last_access_at, revoked_at
  */
@@ -94,7 +94,7 @@ function ipmiWebSanitizeSessionMetaForStorage(array $meta): array
 /**
  * Persist cookie jar + optional BMC auth headers (e.g. Redfish X-Auth-Token) in bmc_cookies JSON.
  * Legacy rows are a flat object of name => value cookies only.
- * Optional _m holds cross-request metadata (KVM plan cache, iLO preflight) — small TTL-bounded blobs only.
+ * Optional _m holds cross-request metadata (KVM plan cache, iLO preflight, ilo_bootstrap lifecycle) — small TTL-bounded blobs only.
  *
  * @param array<string, mixed> $sessionMeta
  */
@@ -180,7 +180,7 @@ function ipmiWebSessionMetaMutate(mysqli $mysqli, string $token, callable $mutat
 }
 
 /**
- * @return array{kvm_plan?: array<string, mixed>, ilo_preflight?: array<string, mixed>}|array<string, mixed>
+ * @return array{kvm_plan?: array<string, mixed>, ilo_preflight?: array<string, mixed>, ilo_bootstrap?: array<string, mixed>}|array<string, mixed>
  */
 function ipmiWebLoadSessionMetaFromRow(string $rawCookies): array
 {
@@ -191,6 +191,39 @@ function ipmiWebLoadSessionMetaFromRow(string $rawCookies): array
     [, , , $meta] = ipmiWebUnpackStoredAuth($raw);
 
     return is_array($meta) ? $meta : [];
+}
+
+/**
+ * Cheap bootstrap viability view from session metadata only (no BMC I/O).
+ * Live probes and auth refresh live in ipmi_proxy.php (ipmiProxyMaybeIloRuntimePreflight).
+ *
+ * @param array<string, mixed> $sessionMeta
+ * @return array{phase: string, preflight_age_sec: int|null, preflight_bootstrap_ok: bool|null}
+ */
+function ipmiWebIloBootstrapViabilityPreflightSummary(array $sessionMeta): array
+{
+    $now = time();
+    $pf = $sessionMeta['ilo_preflight'] ?? null;
+    $age = (is_array($pf) && isset($pf['t'])) ? $now - (int) $pf['t'] : null;
+    $bs = $sessionMeta['ilo_bootstrap'] ?? null;
+    $phase = (is_array($bs) && (int) ($bs['v'] ?? 0) === 1)
+        ? (string) ($bs['phase'] ?? 'fresh')
+        : 'fresh';
+
+    return [
+        'phase'                  => $phase,
+        'preflight_age_sec'     => $age,
+        'preflight_bootstrap_ok' => is_array($pf) ? (isset($pf['bootstrap_ok']) ? (bool) $pf['bootstrap_ok'] : null) : null,
+    ];
+}
+
+/**
+ * @param array<string, mixed> $sessionMeta
+ * @return array{phase: string, preflight_age_sec: int|null, preflight_bootstrap_ok: bool|null}
+ */
+function ipmiWebIloBootstrapViabilityPreflight(array $sessionMeta): array
+{
+    return ipmiWebIloBootstrapViabilityPreflightSummary($sessionMeta);
 }
 
 /**

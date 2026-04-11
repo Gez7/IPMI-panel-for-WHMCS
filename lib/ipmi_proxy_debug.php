@@ -26,7 +26,18 @@
  * KVM plan: kvm_plan_cache_hit (scope db|request), kvm_plan_cache_miss, kvm_plan_cache_expired — DB-backed TTL cache in session _m metadata.
  * Blank-SPA diagnosis: blank_ui_cause / precheck_blank_ui / still_soft_auth — see ipmiProxyIloBlankUiCause in ipmi_proxy.php.
  * failure_axis (unified bucket): soft_auth | hard_http_auth | upstream_transport | auth_refresh_exhausted |
- * fragment_bootstrap_soft | sse_auth_drift | sse_transport | hard_failure — plus mitigates_stale_retry_headers on rebuild logs.
+ * fragment_bootstrap_soft | sse_auth_drift | sse_transport | hard_failure | bootstrap_semantic —
+ * plus mitigates_stale_retry_headers on rebuild logs.
+ * iLO SPA bootstrap lifecycle (session _m.ilo_bootstrap): ilo_bootstrap_state_loaded, ilo_bootstrap_state_updated,
+ * ilo_bootstrap_state_{healthy,degraded,stalled}, ilo_path_role_classified, ilo_bootstrap_critical_path_detected,
+ * ilo_bootstrap_request_executed | ilo_bootstrap_recovery_decision | ilo_bootstrap_retry_executed | ilo_bootstrap_finalized,
+ * ilo_shell_loaded_spa_stalled, ilo_bootstrap_health_{positive,negative}_signal, ilo_bootstrap_semantic_failure_detected,
+ * ilo_fragment_shape_unexpected, ilo_runtime_json_semantically_broken,
+ * ilo_bootstrap_preflight_{started,cache_hit,auth_ok,fragment_ok,degraded,refreshed_auth},
+ * ilo_sse_health_{positive,negative}, ilo_sse_recovered_after_refresh, ilo_sse_still_failing_after_refresh,
+ * ilo_refresh_attempt_suppressed_due_to_recent_failure, ilo_refresh_attempt_recorded, ilo_refresh_budget_exhausted.
+ * Debug response header/console: ilo_bootstrap snapshot (phase, sse_fail_streak, refresh_60s, blank_ui_hypothesis,
+ * last_event_outcome/path) + ilo_path_role on final emit. Preflight: ilo_bootstrap_preflight_skip_second_refresh when stall/degraded relogin already ran once in the same preflight.
  */
 
 /** @var list<array{ts: float, event: string, context: array<string, mixed>}>|null */
