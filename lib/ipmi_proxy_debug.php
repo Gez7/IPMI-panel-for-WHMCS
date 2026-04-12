@@ -72,6 +72,8 @@
  * ilo_live_display_evidence_detected, ilo_console_{canvas_active,viewport_active},
  * ilo_loading_only_state_{present,cleared}, ilo_user_visible_console_success (strong confirmation only).
  * Session _m.ilo_native_console_confirmation: tier, final_debug_verdict, confidence, evidence buckets (server; live display browser-authoritative until optional beacon).
+ * KVM delivery (X-IPMI-Proxy-Debug-Log on proxy responses when debug on): kvm_delivery_tier, kvm_native_route_confirmed,
+ * kvm_fallback_session_available, kvm_user_facing_mode, kvm_client_diagnostic, kvm_blocked_by_suspend (merged plan + DB; not forwarded to BMC).
  * iLO secondary native-console helpers (e.g. jnlp_template during proven HTML5): ilo_secondary_helper_context_check (verdict/strategy/family/phase),
  * ilo_secondary_helper_context_active, ilo_secondary_console_helper_detected, ilo_jnlp_template_promoted (incl. native_ctx_match),
  * ilo_path_role_classified adds native_console_context for helper paths post-upstream,
@@ -146,7 +148,10 @@ function ipmiProxyDebugStripFromQuery(string $queryString): string
         $params['ipmi_kvm_force_html5'],
         $params['ipmi_kvm_stage'],
         $params['ipmi_kvm_unavailable'],
-        $params['ipmi_kvm_replan']
+        $params['ipmi_kvm_replan'],
+        $params['ipmi_kvm_delivery'],
+        $params['ipmi_kvm_native_speculative'],
+        $params['ipmi_kvm_fallback']
     );
 
     return http_build_query($params);

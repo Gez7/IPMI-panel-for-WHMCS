@@ -682,6 +682,11 @@ try {
         'server_ip' => $row['server_ip'],
         'ipmi_ip' => $row['ipmi_ip'],
         'suspended' => (int)$row['suspended'],
+        'kvm_access' => [
+          'mode' => 'panel_proxied',
+          'note' => 'KVM and IPMI web access are opened only through the panel proxy; raw BMC credentials are not exposed to clients.',
+          'suspended_blocks_client_kvm' => ((int)$row['suspended'] === 1),
+        ],
       ]);
       break;
 
@@ -875,6 +880,14 @@ try {
       break;
 
     case 'poweron':
+      if (getServerSuspendedFlag($mysqli, $serverId) === 1) {
+        respond([
+          'error' => 'Server is suspended. Power-on is not allowed.',
+          'server_id' => $serverId,
+          'action' => 'power_on',
+          'suspended' => 1,
+        ], 403);
+      }
       $async = !isset($_POST['async']) || $_POST['async'] !== '0';
       if ($async) {
         $queued = queueBackgroundPowerAction($serverId, 'on');
@@ -941,6 +954,14 @@ try {
       break;
 
     case 'reboot':
+      if (getServerSuspendedFlag($mysqli, $serverId) === 1) {
+        respond([
+          'error' => 'Server is suspended. Reboot is not allowed.',
+          'server_id' => $serverId,
+          'action' => 'reboot',
+          'suspended' => 1,
+        ], 403);
+      }
       $async = !isset($_POST['async']) || $_POST['async'] !== '0';
       if ($async) {
         $queued = queueBackgroundPowerAction($serverId, 'reset');

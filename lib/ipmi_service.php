@@ -67,13 +67,17 @@ class IPMIService
 
     $ip = $server['ipmi_ip'];
 
-    // Check suspension for power-on commands
+    // Suspended services: block actions that can bring the host up or cycle it from the client/API path.
     if (isset($server['suspended']) && (int)$server['suspended'] === 1) {
-      $powerCommands = ['chassis power on', 'power on'];
       $cmdLower = strtolower($command);
-      foreach ($powerCommands as $pcmd) {
+      $blockedWhenSuspended = [
+        'chassis power on',
+        'chassis power reset',
+        'chassis power cycle',
+      ];
+      foreach ($blockedWhenSuspended as $pcmd) {
         if (strpos($cmdLower, $pcmd) !== false) {
-          throw new Exception("Server is suspended. Power-on is not allowed.");
+          throw new Exception("Server is suspended. This power action is not allowed.");
         }
       }
     }
@@ -794,4 +798,27 @@ class IPMIService
     }
     return false;
   }
+}
+
+function ipmiServiceIsSuspendedForClientActions(array $serverRow): bool
+{
+  return isset($serverRow['suspended']) && (int) $serverRow['suspended'] === 1;
+}
+
+function ipmiServiceCanOpenKvmForClient(array $serverRow, bool $isAdmin): bool
+{
+  if ($isAdmin) {
+    return true;
+  }
+
+  return !ipmiServiceIsSuspendedForClientActions($serverRow);
+}
+
+function ipmiServiceCanPowerOnForClient(array $serverRow, bool $isAdmin): bool
+{
+  if ($isAdmin) {
+    return true;
+  }
+
+  return !ipmiServiceIsSuspendedForClientActions($serverRow);
 }

@@ -1329,6 +1329,9 @@ function ipmiProxyInjectKvmAutoLaunchPatch(string $html, string $token, $session
         $session = $sessionOrLegacyBmcType;
     }
     $plan = $launchPlan ?? ipmiWebResolveKvmLaunchPlan($session, $persistKvmPlanMysqli);
+    // Recompute delivery/abandonment against the latest session meta (same request as discovery updates).
+    unset($plan['_kvm_delivery_merged_v1']);
+    $plan = ipmiWebKvmLaunchPlanMergeDelivery($plan, $session);
     $planSrc = (string) ($plan['debug']['plan_source'] ?? '');
     if (ipmiProxyDebugEnabled()
         && ($planSrc === 'cache_hit_db' || $planSrc === 'request_memo_hit' || str_starts_with($planSrc, 'cache_hit'))) {
@@ -1349,12 +1352,19 @@ function ipmiProxyInjectKvmAutoLaunchPatch(string $html, string $token, $session
         'bootstrap_markers' => is_array($plan['bootstrap_markers'] ?? null) ? $plan['bootstrap_markers'] : [],
         'transport_markers' => is_array($plan['transport_markers'] ?? null) ? $plan['transport_markers'] : [],
         'interactive_success_markers' => is_array($plan['interactive_success_markers'] ?? null) ? $plan['interactive_success_markers'] : [],
-        'should_attempt_proxy_autolaunch' => !isset($plan['should_attempt_proxy_autolaunch']) || !empty($plan['should_attempt_proxy_autolaunch']),
+        'should_attempt_proxy_autolaunch' => !empty($plan['effective_should_attempt_proxy_autolaunch'])
+            ? true
+            : (!isset($plan['should_attempt_proxy_autolaunch']) || !empty($plan['should_attempt_proxy_autolaunch'])),
         'ilo_native_console_verdict' => (string) ($plan['ilo_native_console_verdict'] ?? ''),
         'console_capability' => (string) ($plan['console_capability'] ?? ''),
         'native_launch_viable' => !empty($plan['native_launch_viable']),
         'autolaunch_suppression_detail' => (string) ($plan['autolaunch_suppression_detail'] ?? ''),
         'speculative_shell_autolaunch' => ((string) ($plan['launch_strategy'] ?? '')) === 'ilo_speculative_shell_autolaunch',
+        'delivery_tier' => (string) ($plan['delivery_tier'] ?? ''),
+        'user_facing_kvm_mode' => (string) ($plan['user_facing_kvm_mode'] ?? ''),
+        'client_visible_kvm_state' => (string) ($plan['client_visible_kvm_state'] ?? ''),
+        'speculative_shell_abandoned' => !empty($plan['speculative_shell_abandoned']) ? 1 : 0,
+        'preferred_native_path' => (string) ($plan['preferred_native_path'] ?? ''),
     ];
     $familyJs = json_encode((string) ($plan['vendor_family'] ?? 'generic'), JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_UNESCAPED_SLASHES);
     $planJs = json_encode($planLite, JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_UNESCAPED_SLASHES);
@@ -1498,6 +1508,222 @@ function ipmiProxyIloShouldSuppressFurtherAutolaunch(array $plan, array $session
     }
 
     return $recent >= 5;
+}
+
+/**
+ * @param array<string, mixed> $plan
+ * @param array<string, mixed> $session
+ */
+function ipmiProxyShouldAbandonSpeculativeShellLaunch(array $session, array $plan): bool
+{
+    return function_exists('ipmiWebShouldAbandonIloSpeculativeShellLaunch')
+        && ipmiWebShouldAbandonIloSpeculativeShellLaunch($session, $plan);
+}
+
+/**
+ * @param array<string, mixed> $plan
+ */
+function ipmiProxyDetermineKvmDeliveryTier(array $plan, array $session = []): string
+{
+    unset($session);
+
+    return (string) ($plan['delivery_tier'] ?? 'panel_controlled_proxy_session');
+}
+
+/**
+ * @param array<string, mixed> $plan
+ */
+function ipmiProxyCanOfferControlledFallback(array $plan): bool
+{
+    return !empty($plan['fallback_session_available'])
+        && (string) ($plan['delivery_tier'] ?? '') !== 'kvm_unavailable';
+}
+
+/**
+ * @param array<string, mixed> $plan
+ * @param array<string, mixed> $session
+ * @return array<string, mixed>
+ */
+function ipmiProxyFinalizeKvmDeliveryVerdict(array $plan, array $session): array
+{
+    unset($plan['_kvm_delivery_merged_v1']);
+
+    return ipmiWebKvmLaunchPlanMergeDelivery($plan, $session);
+}
+
+/**
+ * @param array<string, mixed> $plan
+ */
+function ipmiProxyShouldUseNativePreferredPath(array $plan): bool
+{
+    if ((string) ($plan['vendor_family'] ?? '') !== 'ilo') {
+        return true;
+    }
+    $s = (string) ($plan['launch_strategy'] ?? '');
+
+    return $s === 'ilo_application_force_html5' || $s === 'ilo_application_autolaunch' || $s === 'ilo_irc_bootstrap' || $s === 'ilo_rc_info_first';
+}
+
+/**
+ * @param array<string, mixed> $confirmation from ipmiWebIloNativeConsoleConfirmation
+ */
+function ipmiProxyStrongNativeConfirmation(array $confirmation): bool
+{
+    return (string) ($confirmation['final_debug_verdict'] ?? '') === 'native_console_strongly_confirmed';
+}
+
+/**
+ * @param array<string, mixed> $confirmation
+ */
+function ipmiProxyRejectWeakShellEvidence(array $confirmation): bool
+{
+    return !empty($confirmation['shell_only_signal'])
+        && (string) ($confirmation['final_debug_verdict'] ?? '') !== 'native_console_strongly_confirmed';
+}
+
+/**
+ * @param array<string, mixed> $confirmation
+ */
+function ipmiProxyLooksLikeLiveServerDisplay(array $confirmation): bool
+{
+    return !empty($confirmation['live_display_confirmed']);
+}
+
+/**
+ * @param array<string, mixed> $session
+ */
+function ipmiProxyIloLooksLikeShellOnlyStall(array $session): bool
+{
+    $ld = ipmiProxyIloLaunchDiscoveryStateLoad($session);
+    $fv = strtolower((string) ($ld['final_discovery_verdict'] ?? ''));
+
+    return str_contains($fv, 'shell') || str_contains($fv, 'no_effect') || str_contains($fv, 'no_launch');
+}
+
+/**
+ * @param array<string, mixed> $session
+ */
+function ipmiProxyIloLooksLikeWhiteScreenStall(array $session): bool
+{
+    $ld = ipmiProxyIloLaunchDiscoveryStateLoad($session);
+    $fv = strtolower((string) ($ld['final_discovery_verdict'] ?? ''));
+    $det = strtolower((string) ($ld['discovery_failure_detail'] ?? ''));
+
+    return str_contains($fv, 'white_screen') || str_contains($det, 'white_screen');
+}
+
+/**
+ * @return array{reason: string, detail: string}
+ */
+function ipmiProxyFinalizeNativeLaunchFailure(array $session, string $fallbackDetail = ''): array
+{
+    if (ipmiProxyIloLooksLikeWhiteScreenStall($session)) {
+        return ['reason' => 'white_screen_stall', 'detail' => $fallbackDetail];
+    }
+    if (ipmiProxyIloLooksLikeShellOnlyStall($session)) {
+        return ['reason' => 'shell_only_stall', 'detail' => $fallbackDetail];
+    }
+    $ld = ipmiProxyIloLaunchDiscoveryStateLoad($session);
+    $fv = strtolower((string) ($ld['final_discovery_verdict'] ?? ''));
+    if (str_contains($fv, 'no_launch') || str_contains($fv, 'no_effect')) {
+        return ['reason' => 'no_launch_target_found', 'detail' => $fallbackDetail];
+    }
+    $conf = ipmiWebIloNativeConsoleConfirmation($session, []);
+    if (empty($conf['transport_started']) && !empty($conf['shell_only_signal'])) {
+        return ['reason' => 'transport_never_started', 'detail' => $fallbackDetail];
+    }
+    if (empty($conf['session_ready']) && !empty($conf['shell_only_signal'])) {
+        return ['reason' => 'session_never_ready', 'detail' => $fallbackDetail];
+    }
+
+    return ['reason' => 'native_route_missing', 'detail' => $fallbackDetail];
+}
+
+/**
+ * @param array<string, mixed> $plan
+ * @param array<string, mixed> $session
+ * @return array<string, mixed>
+ */
+function ipmiProxyBuildFallbackSessionPlan(array $plan, array $session): array
+{
+    unset($session);
+    $out = $plan;
+    $out['user_facing_kvm_mode'] = 'panel_fallback_console';
+    $out['delivery_tier'] = 'panel_controlled_proxy_session';
+    $out['client_visible_kvm_state'] = 'panel_fallback_console_available';
+
+    return $out;
+}
+
+function ipmiProxyCanUseNoVncFallback(): bool
+{
+    $p = realpath(__DIR__ . '/novnc/vnc_lite.html');
+
+    return $p !== false && is_file($p);
+}
+
+/**
+ * @param array<string, mixed> $session
+ */
+function ipmiProxyCanUsePanelHostedSessionFallback(array $session): bool
+{
+    return isset($session['token']) && preg_match('/^[a-f0-9]{64}$/', (string) $session['token']);
+}
+
+/**
+ * @param array<string, mixed> $plan
+ */
+function ipmiProxyFallbackSessionUrl(string $token, string $bmcPath, array $plan): string
+{
+    $fp = ipmiProxyBuildFallbackSessionPlan($plan, []);
+
+    return ipmiWebBuildProxyUrlWithDelivery($token, $bmcPath, $fp);
+}
+
+/**
+ * @param array<string, mixed> $plan
+ */
+function ipmiProxyDetermineVendorKvmOptions(array $plan): array
+{
+    return [
+        'vendor_family'        => (string) ($plan['vendor_family'] ?? ''),
+        'console_capability'   => (string) ($plan['console_capability'] ?? ''),
+        'native_launch_viable' => !empty($plan['native_launch_viable']),
+        'launch_strategy'      => (string) ($plan['launch_strategy'] ?? ''),
+    ];
+}
+
+/**
+ * @param array<string, mixed> $plan
+ */
+function ipmiProxyDetermineFinalUserFacingKvmMode(array $plan): string
+{
+    return (string) ($plan['user_facing_kvm_mode'] ?? 'panel_fallback_console');
+}
+
+/**
+ * Non-blocking banner: session is panel-proxied (Tier B) — native console not strongly confirmed yet.
+ */
+function ipmiProxyInjectKvmPanelControlledBanner(string $html): string
+{
+    if (stripos($html, 'data-ipmi-proxy-kvm-panel-controlled') !== false) {
+        return $html;
+    }
+    $patch = '<script data-ipmi-proxy-kvm-panel-controlled="1">'
+        . '(function(){try{'
+        . 'if(!document||!document.body)return;'
+        . 'var q=new URLSearchParams(location.search||"");'
+        . 'if(q.get("ipmi_kvm_delivery")!=="panel_controlled")return;'
+        . 'var existing=document.getElementById("ipmi-kvm-panel-controlled-banner");'
+        . 'if(existing)return;'
+        . 'var d=document.createElement("div");d.id="ipmi-kvm-panel-controlled-banner";'
+        . 'd.style.cssText="position:fixed;z-index:2147483646;left:14px;top:14px;max-width:520px;background:#142a4a;color:#e2f0ff;border:1px solid #3d6aaa;border-radius:10px;padding:10px 14px;font:12px/1.45 Arial,sans-serif;box-shadow:0 6px 18px rgba(0,0,0,.35)";'
+        . 'd.textContent="Panel-proxied BMC session: live vendor KVM is still establishing. If the console stalls, use Debug from ipmi_kvm or open with ipmi_kvm_replan=1. Access stays on the panel; BMC credentials are not exposed.";'
+        . 'document.body.appendChild(d);'
+        . 'setTimeout(function(){try{d.style.opacity="0";setTimeout(function(){if(d&&d.parentNode){d.parentNode.removeChild(d);}},260);}catch(_e){}},14000);'
+        . '}catch(e){}})();</script>';
+
+    return ipmiProxyInjectIntoHtmlHeadOrBody($html, $patch);
 }
 
 function ipmiProxyInjectKvmUnavailableHint(string $html): string
@@ -7536,6 +7762,19 @@ if ($rewriteBody) {
                 ]);
             }
         }
+        $shouldInjectKvmPanelControlled = ($httpCode >= 200 && $httpCode < 400)
+            && ipmiWebBmcFamily($bmcTypeStr) === 'ilo'
+            && in_array($kvmHintPath, ['/', '/index.html', '/html/application.html', '/html/summary.html'], true)
+            && (string) ($_GET['ipmi_kvm_delivery'] ?? '') === 'panel_controlled';
+        if ($shouldInjectKvmPanelControlled) {
+            $responseBody = ipmiProxyInjectKvmPanelControlledBanner($responseBody);
+            if (ipmiProxyDebugEnabled()) {
+                ipmiProxyDebugLog('kvm_panel_controlled_banner_injected', [
+                    'trace' => $ipmiTraceId,
+                    'bmcPath' => $bmcPath,
+                ]);
+            }
+        }
         $injectIloPatch = $shouldInjectIloPatch;
     }
 }
@@ -7554,6 +7793,41 @@ if (ipmiProxyDebugEnabled()) {
         'injectIloPatch' => $injectIloPatch,
         'htmlDocDir'     => $isHtml ? $docDir : null,
     ]);
+    // KVM delivery snapshot: merge cached plan with live session meta (tier fields are not persisted in kvm_plan).
+    $kvmDelDbg = [
+        'kvm_delivery_tier'              => '',
+        'kvm_native_route_confirmed'     => 0,
+        'kvm_fallback_session_available' => 0,
+        'kvm_user_facing_mode'           => '',
+        'kvm_client_diagnostic'          => '',
+        'kvm_blocked_by_suspend'         => 0,
+    ];
+    $kvmPlanSnapAll = is_array($session['session_meta']['kvm_plan']['plan'] ?? null)
+        ? $session['session_meta']['kvm_plan']['plan'] : null;
+    if (is_array($kvmPlanSnapAll)) {
+        $pDbg = $kvmPlanSnapAll;
+        unset($pDbg['_kvm_delivery_merged_v1']);
+        $mPlan = ipmiWebKvmLaunchPlanMergeDelivery($pDbg, $session);
+        $kvmDelDbg['kvm_delivery_tier'] = (string) ($mPlan['delivery_tier'] ?? '');
+        $kvmDelDbg['kvm_native_route_confirmed'] = !empty($mPlan['native_route_confirmed']) ? 1 : 0;
+        $kvmDelDbg['kvm_fallback_session_available'] = !empty($mPlan['fallback_session_available']) ? 1 : 0;
+        $kvmDelDbg['kvm_user_facing_mode'] = (string) ($mPlan['user_facing_kvm_mode'] ?? '');
+        $kvmDelDbg['kvm_client_diagnostic'] = (string) ($mPlan['client_visible_kvm_state'] ?? '');
+    }
+    $sidDbg = (int) ($session['server_id'] ?? 0);
+    if ($sidDbg > 0) {
+        $stS = $mysqli->prepare('SELECT COALESCE(suspended, 0) AS s FROM server_suspension WHERE server_id = ? LIMIT 1');
+        if ($stS) {
+            $stS->bind_param('i', $sidDbg);
+            $stS->execute();
+            $resS = $stS->get_result();
+            $rs = $resS ? $resS->fetch_assoc() : null;
+            $stS->close();
+            if ($rs && (int) ($rs['s'] ?? 0) === 1) {
+                $kvmDelDbg['kvm_blocked_by_suspend'] = 1;
+            }
+        }
+    }
     $iloDbgExtra = [];
     if (ipmiWebIsNormalizedIloType($bmcTypeNorm)) {
         $iloDbgExtra['ilo_bootstrap'] = ipmiProxyIloBootstrapDebugSnapshot($session);
@@ -7577,8 +7851,7 @@ if (ipmiProxyDebugEnabled()) {
         $iloDbgExtra['ilo_path_bootstrap_critical'] = !empty($iloPrFinal['bootstrap_critical']) ? 1 : 0;
         $iloDbgExtra['ilo_path_role_flags'] = $iloPrFinal['flags'] ?? [];
         $iloDbgExtra['ilo_path_heuristic_score'] = (int) ($iloPrFinal['heuristic_score'] ?? 0);
-        $kvmPlanSnap = is_array($session['session_meta']['kvm_plan']['plan'] ?? null)
-            ? $session['session_meta']['kvm_plan']['plan'] : null;
+        $kvmPlanSnap = $kvmPlanSnapAll;
         if (is_array($kvmPlanSnap) && (($kvmPlanSnap['vendor_family'] ?? '') === 'ilo')) {
             $iloDbgExtra['ilo_native_console_verdict'] = (string) ($kvmPlanSnap['ilo_native_console_verdict'] ?? '');
             $iloDbgExtra['ilo_console_capability'] = (string) ($kvmPlanSnap['console_capability'] ?? '');
@@ -7602,7 +7875,7 @@ if (ipmiProxyDebugEnabled()) {
         'trace'   => $ipmiTraceId,
         'bmcPath' => $bmcPath,
         'phase'   => 'response',
-    ], $iloDbgExtra));
+    ], $kvmDelDbg, $iloDbgExtra));
     if ($isHtml && $httpCode >= 200 && $httpCode < 500) {
         ipmiProxyDebugAppendConsoleScript($responseBody, $ipmiTraceId, $bmcPath);
     }

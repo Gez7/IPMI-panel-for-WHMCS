@@ -289,6 +289,10 @@ function ipmipanel_poweron(array $params)
     if ($serverId <= 0) {
         return 'Cannot resolve server for hostname: ' . $hostname;
     }
+    $resolve = ipmipanel_apiCall($params, 'resolve', ['hostname' => $hostname]);
+    if ((int)($resolve['suspended'] ?? 0) === 1) {
+        return 'Power On blocked: server is suspended.';
+    }
     $result = ipmipanel_apiCall($params, 'poweron', ['server_id' => $serverId]);
     if (isset($result['error'])) {
         return 'Power On failed: ' . $result['error'];
@@ -317,6 +321,10 @@ function ipmipanel_reboot(array $params)
     if ($serverId <= 0) {
         return 'Cannot resolve server for hostname: ' . $hostname;
     }
+    $resolve = ipmipanel_apiCall($params, 'resolve', ['hostname' => $hostname]);
+    if ((int)($resolve['suspended'] ?? 0) === 1) {
+        return 'Reboot blocked: server is suspended.';
+    }
     $result = ipmipanel_apiCall($params, 'reboot', ['server_id' => $serverId]);
     if (isset($result['error'])) {
         return 'Reboot failed: ' . $result['error'];
@@ -333,6 +341,39 @@ function ipmipanel_resolveServerId(array $params, string $hostname): int
     return (int)($resolve['server_id'] ?? 0);
 }
 
+function ipmipanel_normalizeActionState(array $apiResult): array
+{
+    $out = [
+        'ok' => !isset($apiResult['error']),
+        'error' => (string)($apiResult['error'] ?? ''),
+        'suspended' => (int)($apiResult['suspended'] ?? 0),
+    ];
+    if (isset($apiResult['success'])) {
+        $out['success'] = (bool)$apiResult['success'];
+    }
+
+    return $out;
+}
+
+function ipmipanel_mapPanelServiceState(array $resolve): array
+{
+    return [
+        'server_id' => (int)($resolve['server_id'] ?? 0),
+        'suspended' => (int)($resolve['suspended'] ?? 0),
+        'kvm_access' => is_array($resolve['kvm_access'] ?? null) ? $resolve['kvm_access'] : [],
+    ];
+}
+
+function ipmipanel_shouldShowPowerControls(bool $isSuspended, int $serverId): bool
+{
+    return $serverId > 0 && !$isSuspended;
+}
+
+function ipmipanel_shouldShowKvmAccess(bool $isSuspended, int $serverId): bool
+{
+    return $serverId > 0 && !$isSuspended;
+}
+
 function ipmipanel_ClientArea(array $params)
 {
     $panelUrl = rtrim(trim((string)($params['configoption1'] ?? '')), '/');
@@ -341,6 +382,7 @@ function ipmipanel_ClientArea(array $params)
     $serverId = 0;
     $isSuspended = false;
     $powerState = 'unknown';
+    $resolve = [];
 
     if ($hostname !== '') {
         $resolve = ipmipanel_apiCall($params, 'resolve', ['hostname' => $hostname]);
@@ -363,6 +405,13 @@ function ipmipanel_ClientArea(array $params)
     $ipmiSessionUrl = '';
     $kvmConsoleUrl = '';
     $panelLoginUrl = '';
+    $kvmAccessNote = '';
+    if ($hostname !== '' && is_array($resolve)) {
+        $ka = $resolve['kvm_access'] ?? [];
+        if (is_array($ka) && isset($ka['note'])) {
+            $kvmAccessNote = (string)$ka['note'];
+        }
+    }
     if ($serverId > 0 && $panelUrl !== '') {
         $ipmiSessionUrl = $panelUrl . '/ipmi_session.php?id=' . $serverId;
         $kvmConsoleUrl = $panelUrl . '/ipmi_kvm.php?id=' . $serverId;
@@ -385,6 +434,44 @@ function ipmipanel_ClientArea(array $params)
             'ipmipanelPanelLoginUrl'  => $panelLoginUrl,
             'ipmipanelPanelUsername'  => $panelUsername,
             'ipmipanelPanelPassword'  => $panelPassword,
+            'ipmipanelKvmAccessNote'  => $kvmAccessNote,
         ],
     ];
+}
+
+// Spec-oriented aliases (same behavior as ipmipanel_* helpers above).
+if (!function_exists('ipmiModuleNormalizeActionState')) {
+    function ipmiModuleNormalizeActionState(array $apiResult): array
+    {
+        return ipmipanel_normalizeActionState($apiResult);
+    }
+}
+if (!function_exists('ipmiModuleMapPanelServiceState')) {
+    function ipmiModuleMapPanelServiceState(array $resolve): array
+    {
+        return ipmipanel_mapPanelServiceState($resolve);
+    }
+}
+if (!function_exists('ipmiModuleShouldShowPowerControls')) {
+    function ipmiModuleShouldShowPowerControls(bool $isSuspended, int $serverId): bool
+    {
+        return ipmipanel_shouldShowPowerControls($isSuspended, $serverId);
+    }
+}
+if (!function_exists('ipmiModuleShouldShowKvmAccess')) {
+    function ipmiModuleShouldShowKvmAccess(bool $isSuspended, int $serverId): bool
+    {
+        return ipmipanel_shouldShowKvmAccess($isSuspended, $serverId);
+    }
+}
+if (!function_exists('ipmiModuleCanPerformActionForService')) {
+    function ipmiModuleCanPerformActionForService(bool $isSuspended, string $action): bool
+    {
+        if (!$isSuspended) {
+            return true;
+        }
+        $a = strtolower($action);
+
+        return $a === 'poweroff' || $a === 'power_off';
+    }
 }

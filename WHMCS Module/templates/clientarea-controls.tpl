@@ -41,6 +41,9 @@
                 <a href="clientarea.php?action=productdetails&id={$serviceid}&modop=custom&a=reboot" class="btn btn-warning" onclick="return confirm('Reboot this server?')">Reboot</a>
             </div>
 
+            {if $ipmipanelKvmAccessNote}
+            <p class="text-muted small" style="margin:10px 0;">{$ipmipanelKvmAccessNote}</p>
+            {/if}
             <h4>Remote Access</h4>
             <div class="ipmi-access-buttons">
                 {if $ipmipanelIpmiSessionUrl}

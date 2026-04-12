@@ -43,8 +43,13 @@ try {
     $sessionData = ipmiWebCreateSession($mysqli, $serverId, $userId, $role, 7200);
 
     $launchPlan = ipmiWebResolveKvmLaunchPlan($sessionData, $mysqli);
+    if ((string) ($launchPlan['delivery_tier'] ?? '') === 'kvm_unavailable'
+        || empty($launchPlan['fallback_session_available'])) {
+        throw new Exception('KVM console is not available for this server through the panel right now. '
+            . 'If this persists, contact support — the BMC may require a different remote console mode or licensing.');
+    }
     $launchPath = (string) ($launchPlan['kvm_entry_path'] ?? '/');
-    $launchUrl = ipmiWebBuildProxyUrl((string) $sessionData['token'], $launchPath);
+    $launchUrl = ipmiWebBuildProxyUrlWithDelivery((string) $sessionData['token'], $launchPath, $launchPlan);
     if ($debugProxy) {
       $launchUrl .= (str_contains($launchUrl, '?') ? '&' : '?') . 'ipmi_proxy_debug=1';
       $summary = ipmiWebKvmPlanLogSummary($launchPlan);
@@ -98,6 +103,7 @@ $title = 'KVM Console';
         <dt style="opacity:.75;margin:0;">Vendor family / variant</dt><dd style="margin:0 0 8px 0;"><?= htmlspecialchars((string) ($planSum['vendor_family'] ?? '') . ' / ' . (string) ($planSum['vendor_variant'] ?? ''), ENT_QUOTES, 'UTF-8') ?></dd>
         <dt style="opacity:.75;margin:0;">Plan source</dt><dd style="margin:0 0 8px 0;"><?= htmlspecialchars((string) ($planSum['plan_source'] ?? '') . (isset($planSum['plan_cache_age_sec']) ? ' (cache age ' . (int) $planSum['plan_cache_age_sec'] . 's)' : ''), ENT_QUOTES, 'UTF-8') ?></dd>
         <dt style="opacity:.75;margin:0;">Strategy / mode</dt><dd style="margin:0 0 8px 0;"><?= htmlspecialchars((string) ($planSum['launch_strategy'] ?? '') . ' — ' . (string) ($planSum['mode'] ?? ''), ENT_QUOTES, 'UTF-8') ?></dd>
+        <dt style="opacity:.75;margin:0;">Delivery tier / client mode</dt><dd style="margin:0 0 8px 0;"><?= htmlspecialchars((string) ($planSum['delivery_tier'] ?? '') . ' — ' . (string) ($planSum['user_facing_kvm_mode'] ?? '') . ' — ' . (string) ($planSum['client_visible_kvm_state'] ?? ''), ENT_QUOTES, 'UTF-8') ?></dd>
         <dt style="opacity:.75;margin:0;">Entry / shell / bootstrap paths</dt><dd style="margin:0 0 8px 0;word-break:break-all;"><?= htmlspecialchars((string) ($planSum['kvm_entry_path'] ?? '') . ' | shell: ' . (string) ($planSum['shell_entry'] ?? '') . ' | boot: ' . (string) ($planSum['console_boot'] ?? ''), ENT_QUOTES, 'UTF-8') ?></dd>
         <dt style="opacity:.75;margin:0;">Console ready timeout (ms)</dt><dd style="margin:0 0 8px 0;"><?= (int) ($planSum['console_ready_timeout_ms'] ?? 0) ?></dd>
         <dt style="opacity:.75;margin:0;">iLO native console verdict</dt><dd style="margin:0 0 8px 0;word-break:break-word;font-size:12px;"><?= htmlspecialchars(trim((string) ($planSum['ilo_native_console_verdict'] ?? '') . ' | capability: ' . (string) ($planSum['console_capability'] ?? '') . ' | autolaunch: ' . (string) (($planSum['should_attempt_proxy_autolaunch'] ?? 0) ? 'yes' : 'no') . ' | shell auth hint: ' . (string) ($planSum['shell_authenticated_hint'] ?? '') . ' | bootstrap healthy hint: ' . (string) ($planSum['shell_bootstrap_healthy_hint'] ?? '')), ENT_QUOTES, 'UTF-8') ?></dd>

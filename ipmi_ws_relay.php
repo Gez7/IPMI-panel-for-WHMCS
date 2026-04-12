@@ -60,6 +60,41 @@ if (!$panelUserId) {
     }
 }
 
+// Align with panel/KVM policy: clients must not open new relay paths while suspended (admins may).
+$serverIdRelay = (int) ($session['server_id'] ?? 0);
+if ($serverIdRelay > 0) {
+    $susRow = null;
+    $stSus = $mysqli->prepare('SELECT COALESCE(suspended, 0) AS s FROM server_suspension WHERE server_id = ? LIMIT 1');
+    if ($stSus) {
+        $stSus->bind_param('i', $serverIdRelay);
+        $stSus->execute();
+        $rSus = $stSus->get_result();
+        $susRow = $rSus ? $rSus->fetch_assoc() : null;
+        $stSus->close();
+    }
+    if ($susRow && (int) ($susRow['s'] ?? 0) === 1) {
+        $webUserId = (int) ($session['user_id'] ?? 0);
+        $roleRow = null;
+        if ($webUserId > 0) {
+            $stR = $mysqli->prepare("SELECT role FROM users WHERE id = ? LIMIT 1");
+            if ($stR) {
+                $stR->bind_param('i', $webUserId);
+                $stR->execute();
+                $rr = $stR->get_result();
+                $roleRow = $rr ? $rr->fetch_assoc() : null;
+                $stR->close();
+            }
+        }
+        $isAdminRelay = is_array($roleRow) && (string) ($roleRow['role'] ?? '') === 'admin';
+        if (!$isAdminRelay) {
+            http_response_code(403);
+            header('Content-Type: application/json');
+            echo json_encode(['error' => 'Server is suspended', 'suspended' => 1]);
+            exit;
+        }
+    }
+}
+
 $isWsUpgrade = (
     isset($_SERVER['HTTP_UPGRADE'])
     && stripos((string)$_SERVER['HTTP_UPGRADE'], 'websocket') !== false
