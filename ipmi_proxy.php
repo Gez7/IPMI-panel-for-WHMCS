@@ -486,6 +486,7 @@ function ipmiProxyBuildKvmAutoLaunchPreambleJs(string $familyJs, string $planJs,
         . 'function markDone(){try{if(window.sessionStorage){sessionStorage.setItem("_ipmi_kvm_autolaunch_done","1");}}catch(e){}}'
         . 'function markAppRedirected(){try{if(window.sessionStorage){sessionStorage.setItem("_ipmi_kvm_app_redirected","1");}}catch(e){}}'
         . 'function wasAppRedirected(){try{return !!(window.sessionStorage&&sessionStorage.getItem("_ipmi_kvm_app_redirected")==="1");}catch(e){return false;}}'
+        . 'try{var _cs0=document.currentScript;if(_cs0){var _pm=_cs0.getAttribute("data-ipmi-kvm-patch-mode")||"";_kvmDbg("ilo_kvm_runtime_debug_matrix",{js_syntactically_valid:_cs0.getAttribute("data-ipmi-kvm-js-valid")==="1"?"yes":"no",runtime_patch_injected:_pm==="safe_fallback"?"no":"yes",application_path_loaded_now:pathLower().indexOf("/html/application.html")>=0?"yes":"no",note:"dynamic_shell_helper_live_final_in_il_confirmation_signals_collected_and_il_console_readiness_verdict"});}}catch(_eM0){}'
         . 'function forceSameTabOpen(ctx){try{'
         . 'if(!ctx||!ctx.open||ctx.__ipmi_kvm_open_patched)return;'
         . 'var ow=ctx.open.bind(ctx);'
@@ -615,8 +616,11 @@ function ipmiProxyBuildKvmAutoLaunchIloDomHelpersJs(): string
         . 'function ipmiProxyIloFrameCandidateClassify(el,sc){try{var src=String(el.getAttribute("src")||"").toLowerCase(),id=String(el.getAttribute("id")||"").toLowerCase(),nm=String(el.getAttribute("name")||"").toLowerCase();if(id==="framecontent"||nm==="framecontent"||src.indexOf("content.html")>=0)return"shell_frame";if(sc>=40||(src.indexOf("rc_info")>=0||src.indexOf("application.html")>=0||src.indexOf("irc")>=0))return"console_frame_candidate";if(sc>=22||src.indexOf("html/")>=0)return"launcher_frame";return"unrelated";}catch(e){return"unrelated";}}'
         . 'function ipmiProxyIloFindConsoleFrameCandidate(doc){try{if(!doc||!doc.querySelectorAll)return null;var F=doc.querySelectorAll("iframe,frame");var best=null,bs=0;for(var i=0;i<F.length&&i<48;i++){var sc=ipmiProxyIloFrameCandidateScore(F[i]);if(sc>bs){bs=sc;best=F[i];}}if(bs>=22)return {el:best,score:bs,kind:ipmiProxyIloFrameCandidateClassify(best,bs)};}catch(e2){}return null;}'
         . 'function ipmiProxyIloFindNavigableFrame(doc){try{if(!doc||!doc.querySelectorAll)return null;var F=doc.querySelectorAll("iframe,frame");var best=null,bs=0;for(var j=0;j<F.length&&j<48;j++){var sc2=ipmiProxyIloFrameCandidateScore(F[j]);if(sc2>bs){bs=sc2;best=F[j];}}if(bs>=14&&best)return {el:best,score:bs,kind:ipmiProxyIloFrameCandidateClassify(best,bs)};}catch(e3){}return null;}'
-        . 'function ipmiProxyIloTryNamedFn(w,fn,ctxIdx,label){try{if(!w||typeof w[fn]!=="function")return"";_kvmDbg("ilo_launch_function_found",{src:label||fn,ctx:ctxIdx});try{_kvmDbg("ilo_launch_function_invocation_attempted",{fn:fn,ctx:ctxIdx});}catch(_ia){}try{w[fn].call(w,{mode:"WINDOW"});try{_kvmDbg("ilo_launch_function_invocation_succeeded",{fn:fn,ctx:ctxIdx});}catch(_is0){}return"fn_"+fn;}catch(_f0){try{w[fn].call(w);try{_kvmDbg("ilo_launch_function_invocation_succeeded",{fn:fn,ctx:ctxIdx});}catch(_is1){}return"fn_"+fn;}catch(_f1){try{w[fn]();try{_kvmDbg("ilo_launch_function_invocation_succeeded",{fn:fn,ctx:ctxIdx});}catch(_is2){}return"fn_"+fn;}catch(_f2){try{_kvmDbg("ilo_launch_function_invocation_failed",{fn:fn,ctx:ctxIdx});}catch(_if){}}}}catch(_e){}return"";}'
-        . 'function tryProbeIloLaunchGlobals(ctxArr){try{var nm=["startHtml5Irc","openHtml5Irc","launchHtml5Irc","openIntegratedRemoteConsole","openRemoteConsole","launchRemoteConsole","startIntegratedRemoteConsole","showRemoteConsole","openHtmlConsole","launchHtmlConsole","openIRC","startIRC","openVirtualConsole","launchVirtualConsole"];for(var gi=0;gi<ctxArr.length;gi++){var w=ctxArr[gi];if(!w)continue;var r0=ipmiProxyIloTryNamedFn(w,"startHtml5Irc",gi,"global_startHtml5Irc");if(r0)return r0;var il=null;try{il=w.iLO;}catch(_il0){il=null;}if(il){for(var ni=0;ni<nm.length;ni++){var fn=nm[ni],hit="";try{if(typeof il[fn]==="function"){_kvmDbg("ilo_launch_function_found",{src:"iLO."+fn,ctx:gi});try{il[fn].call(il,{mode:"WINDOW"});hit="ilo_"+fn;}catch(_i0){try{il[fn].call(il);hit="ilo_"+fn;}catch(_i1){try{il[fn]();hit="ilo_"+fn;}catch(_i2){}}}}catch(_i3){}if(hit)return hit;}}for(var gj=0;gj<nm.length;gj++){var r1=ipmiProxyIloTryNamedFn(w,nm[gj],gi,"global_"+nm[gj]);if(r1)return r1;}}}catch(gp){}return"";}'
+        . 'function ipmiProxyIloFindConsoleModuleInApplication(doc){try{if(!doc||!doc.querySelectorAll)return null;var L=doc.querySelectorAll("a[href],button,[role=button],[role=tab],[role=menuitem],.hp-menu-item,.gwt-MenuItem,.nav-item,.tree_view a,li.gwt-MenuItem,[class*=console],[id*=console],[class*=remote],[id*=irc]");for(var i=0;i<L.length&&i<220;i++){var e=L[i],tx=String(e.textContent||e.innerText||"");if(iloConsoleKeyword(tx))return e;var h=String(e.getAttribute("href")||"").toLowerCase();if(h.indexOf("rc_info")>=0||h.indexOf("irc")>=0||h.indexOf("html5")>=0)return e;}return null;}catch(e){return null;}}'
+        . 'function ipmiProxyIloFindConsoleLaunchActionInApplication(doc){try{var d0=ipmiProxyIloFindConsoleModuleInApplication(doc);if(d0)return d0;var d1=findIloDeepLaunch({document:doc});if(d1)return d1;var d2=findIloHeuristicLaunch({document:doc});if(d2)return d2;return findIloBestConsoleHrefClickable(doc);}catch(e2){return null;}}'
+        . 'function ipmiProxyIloFollowConsoleFrameTransition(doc,st){try{if(!doc||!st||st.reported.consoleFrameFollowed)return false;var fc=ipmiProxyIloFindConsoleFrameCandidate(doc);if(!fc||!fc.el)return false;var src=String(fc.el.getAttribute("src")||"").toLowerCase();var shellish=(fc.kind==="shell_frame")||(src.indexOf("content.html")>=0||src.indexOf("masthead")>=0||src===""||src==="about:blank");if(fc.score>=16&&shellish&&src.indexOf("rc_info")<0&&src.indexOf("irc")<0){try{fc.el.setAttribute("src","html/rc_info.html");st.reported.consoleFrameFollowed=true;_kvmDbg("ilo_console_content_frame_followed",{score:fc.score,kind:fc.kind||""});return true;}catch(_ff){}}return false;}catch(e){return false;}}'
+        . 'function ipmiProxyIloTryNamedFn(w,fn,ctxIdx,label){try{if(!w||typeof w[fn]!=="function")return"";_kvmDbg("ilo_launch_function_found",{src:label||fn,ctx:ctxIdx});try{_kvmDbg("ilo_launch_function_invocation_attempted",{fn:fn,ctx:ctxIdx});}catch(_ia){}var modes=[function(){w[fn].call(w,{mode:"WINDOW"});},function(){w[fn].call(w);},function(){w[fn]();}];for(var mi=0;mi<modes.length;mi++){try{modes[mi]();try{_kvmDbg("ilo_launch_function_invocation_succeeded",{fn:fn,ctx:ctxIdx});}catch(_is){}return"fn_"+fn;}catch(_fx){}}try{_kvmDbg("ilo_launch_function_invocation_failed",{fn:fn,ctx:ctxIdx});}catch(_if){}}catch(_e){}return"";}'
+        . 'function tryProbeIloLaunchGlobals(ctxArr){try{var nm=["startHtml5Irc","openHtml5Irc","launchHtml5Irc","openIntegratedRemoteConsole","openRemoteConsole","launchRemoteConsole","startIntegratedRemoteConsole","showRemoteConsole","openHtmlConsole","launchHtmlConsole","openIRC","startIRC","openVirtualConsole","launchVirtualConsole"];for(var gi=0;gi<ctxArr.length;gi++){var w=ctxArr[gi];if(!w)continue;var r0=ipmiProxyIloTryNamedFn(w,"startHtml5Irc",gi,"global_startHtml5Irc");if(r0)return r0;var il=null;try{il=w.iLO;}catch(_il0){il=null;}if(il){for(var ni=0;ni<nm.length;ni++){var fn=nm[ni],hit="";try{if(typeof il[fn]==="function"){_kvmDbg("ilo_launch_function_found",{src:"iLO."+fn,ctx:gi});try{il[fn].call(il,{mode:"WINDOW"});hit="ilo_"+fn;}catch(_i0){try{il[fn].call(il);hit="ilo_"+fn;}catch(_i1){try{il[fn]();hit="ilo_"+fn;}catch(_i2){}}}}}catch(_i3){}if(hit)return hit;}}for(var gj=0;gj<nm.length;gj++){var r1=ipmiProxyIloTryNamedFn(w,nm[gj],gi,"global_"+nm[gj]);if(r1)return r1;}}}catch(gp){}return"";}'
         . 'function tryNavigateLauncherFrameOnce(doc,st){try{if(!doc||!st||st.frameNavDone)return false;var fc=ipmiProxyIloFindNavigableFrame(doc);if(!fc||!fc.el)return false;if(fc.score>=10&&fc.score<14)_kvmDbg("ilo_console_frame_candidate_rejected",{score:fc.score,kind:fc.kind||"",reason:"below_nav_threshold"});var el=fc.el,src=String(el.getAttribute("src")||"").toLowerCase(),fid=String(el.getAttribute("id")||"").toLowerCase(),fnm=String(el.getAttribute("name")||"").toLowerCase();if(src.indexOf("rc_info")>=0||src.indexOf("application")>=0)return false;var shellMain=(fc.kind==="shell_frame")&&(fid==="framecontent"||fnm==="framecontent"||src.indexOf("content.html")>=0||src===""||src==="about:blank");var consoleEmpty=(fc.kind==="console_frame_candidate")&&(src===""||src==="about:blank"||src.indexOf("content.html")>=0);if(shellMain&&fc.score>=14){st.frameNavDone=true;_kvmDbg("ilo_console_frame_candidate_followed",{action:"set_src_rc_info",score:fc.score,kind:fc.kind,reason:"shell_main_frame"});try{el.setAttribute("src","html/rc_info.html");return true;}catch(sn0){}}if(fc.kind==="shell_frame")return false;if(fc.score<32)return false;if(consoleEmpty){st.frameNavDone=true;_kvmDbg("ilo_console_frame_candidate_followed",{action:"set_src_rc_info",score:fc.score,kind:fc.kind,reason:"launcher_empty"});try{el.setAttribute("src","html/rc_info.html");return true;}catch(sn1){}}}catch(nf){}return false;}'
         . 'function ipmiProxyIloInspectSameOriginFrameForLaunch(fw){try{if(!fw||!fw.document)return null;var ifs=fw.document.querySelectorAll("iframe,frame");for(var ii=0;ii<ifs.length&&ii<28;ii++){try{var w=ifs[ii].contentWindow;if(!w||!w.document)continue;var el=findIloDeepLaunch({document:w.document})||findIloHeuristicLaunch({document:w.document})||findIloBestConsoleHrefClickable(w.document);if(el){_kvmDbg("ilo_frame_subdocument_launch_control",{iframe_index:ii});return el;}}catch(e2){}}}catch(e){}return null;}'
         . 'function ipmiProxyIloHrefConsoleScore(href){try{var h=String(href||"").toLowerCase();if(!h||h.indexOf("javascript:")===0||h.indexOf("#")===0)return-100;if(h.indexOf("logout")>=0||h.indexOf("log_out")>=0)return-80;var s=0;if(h.indexOf("rc_info")>=0)s+=70;if(h.indexOf("irc")>=0&&h.indexOf(".html")>=0)s+=55;if(h.indexOf("application.html")>=0)s+=50;if(h.indexOf("remote")>=0&&h.indexOf("console")>=0)s+=48;if(h.indexOf("html5")>=0)s+=40;if(h.indexOf("kvm")>=0)s+=35;if(h.indexOf("jnlp")>=0)s+=28;if(h.indexOf("java")>=0&&h.indexOf("irc")>=0)s+=22;if(h.indexOf("console")>=0)s+=18;if(h.indexOf("virtual")>=0&&h.indexOf("console")>=0)s+=20;return s;}catch(e){return 0;}}'
@@ -789,11 +793,12 @@ function ipmiProxyBuildKvmRuntimeProgressHelpersJs(): string
         . 'var C=doc.querySelectorAll("canvas");for(var i=0;i<C.length&&i<32;i++){var c=C[i];if(!c||c.width<80||c.height<60)continue;try{var st=window.getComputedStyle?window.getComputedStyle(c):null;if(st&&st.display==="none")continue;var r=c.getBoundingClientRect();if(r.width>=48&&r.height>=36)return true;}catch(_ce){}}'
         . 'var V=doc.querySelectorAll("video");for(var j=0;j<V.length&&j<8;j++){var v=V[j];if(!v)continue;try{var r2=v.getBoundingClientRect();if(r2.width>=64&&r2.height>=48)return true;}catch(_ve){}}'
         . '}catch(e){}return false;}'
+        . 'function ipmiProxyIloConsoleContentFrameVisible(doc){try{if(!doc||!doc.querySelectorAll)return false;var F=doc.querySelectorAll("iframe,frame");for(var fi=0;fi<F.length&&fi<40;fi++){var el=F[fi],src=String(el.getAttribute("src")||"").toLowerCase();if(src.indexOf("jnlp")>=0)continue;if(src.indexOf("irc")>=0||src.indexOf("rc_info")>=0){var r=el.getBoundingClientRect();if(r.width>48&&r.height>48)return true;}}}catch(e){}return false;}'
         . 'function ipmiProxyIloHasLiveDisplayEvidence(ctx){try{'
-        . 'var L=collectContexts();for(var x=0;x<L.length;x++){try{var d=L[x].document;if(d&&ipmiProxyIloCanvasLooksActive(d))return true;}catch(e1){}}'
+        . 'var L=collectContexts();for(var x=0;x<L.length;x++){try{var d=L[x].document;if(d&&(ipmiProxyIloCanvasLooksActive(d)||ipmiProxyIloConsoleContentFrameVisible(d)))return true;}catch(e1){}}'
         . 'for(var y=0;y<L.length;y++){try{if(rcWindowVisible(L[y]))return true;}catch(e2){}}'
         . '}catch(e){}'
-        . 'try{if(ipmiProxyIloCanvasLooksActive(document))return true;}catch(e3){}'
+        . 'try{if(ipmiProxyIloCanvasLooksActive(document)||ipmiProxyIloConsoleContentFrameVisible(document))return true;}catch(e3){}'
         . 'return false;}'
         . 'function ipmiProxyIloLooksLikeLiveConsoleSurface(ctx){return ipmiProxyIloHasLiveDisplayEvidence(ctx);}'
         . 'function ipmiProxyIloConsoleViewportLooksReal(ctx){return ipmiProxyIloHasLiveDisplayEvidence(ctx);}'
@@ -810,6 +815,9 @@ function ipmiProxyBuildKvmRuntimeProgressHelpersJs(): string
         . 'var nav=doc.querySelectorAll("[class*=nav],[class*=menu],.tree_view,#tabber");'
         . 'if(nav.length>=2&&b.indexOf("overview")>=0&&!ipmiProxyIloCanvasLooksActive(doc)&&!doc.getElementById("ircWindow"))return true;'
         . 'return false;}catch(e){return false;}}'
+        . 'function ipmiProxyIloApplicationLoadedButConsoleNotReached(ctx){try{if(!ipmiProxyIloApplicationPathLoaded())return false;if(ipmiProxyIloHasLiveDisplayEvidence(ctx)||kvmIloRcWindowAny())return false;return true;}catch(e){return false;}}'
+        . 'function ipmiProxyIloApplicationLoadedShellOnly(ctx){try{if(!ipmiProxyIloApplicationPathLoaded())return false;if(ipmiProxyIloHasLiveDisplayEvidence(ctx)||kvmIloRcWindowAny())return false;var doc=(ctx&&ctx.document)?ctx.document:document;if(!doc||!doc.body)return true;if(ipmiProxyIloLooksLikeOverviewShell(doc))return true;var b=String(doc.body.innerText||doc.body.textContent||"").toLowerCase();if(b.indexOf("ilo overview")>=0)return true;if(!ipmiProxyIloCanvasLooksActive(doc)&&!doc.getElementById("ircWindow")){if(b.indexOf("overview")>=0&&(b.indexOf("firmware")>=0||b.indexOf("serial")>=0||b.indexOf("health")>=0))return true;var T=doc.querySelectorAll("table");if(T&&T.length>=4&&(b.indexOf("power")>=0||b.indexOf("temperature")>=0))return true;}return false;}catch(e){return false;}}'
+        . 'function ipmiProxyIloHelperActivitySupportsButDoesNotConfirm(ctx){try{return ipmiProxyIloHelperActivityPresent()&&!ipmiProxyIloHasLiveDisplayEvidence(ctx)&&!kvmIloRcWindowAny()&&(ipmiProxyIloApplicationLoadedShellOnly(ctx)||ipmiProxyIloLooksLikeOverviewShell((ctx&&ctx.document)?ctx.document:document));}catch(e){return false;}}'
         . 'function ipmiProxyIloShellVsConsoleStateStore(o){try{window.__ipmi_ilo_shell_vs_console=o||{};}catch(e){}}'
         . 'function ipmiProxyIloShellVsConsoleStateLoad(){try{return window.__ipmi_ilo_shell_vs_console||null;}catch(e){return null;}}'
         . 'function ipmiProxyIloShellVsConsoleVerdict(){try{var o=ipmiProxyIloShellVsConsoleStateLoad();return o&&o.final_verdict?String(o.final_verdict):"";}catch(e){return"";}}'
@@ -821,12 +829,12 @@ function ipmiProxyBuildKvmRuntimeProgressHelpersJs(): string
         . 'var doc=null;try{doc=(ctx&&ctx.document)?ctx.document:document;}catch(_d0){doc=document;}'
         . 'if(!doc)return false;'
         . 'if(ipmiProxyIloLooksLikeOverviewShell(doc))return true;'
-        . 'if(ipmiProxyIloApplicationPathLoaded())return true;'
+        . 'if(ipmiProxyIloApplicationLoadedShellOnly(ctx))return true;'
         . 'if(ipmiProxyIloPathIsManagementShellish()&&!ipmiProxyIloConsoleRouteReached())return true;'
         . 'return false;}catch(e){return false;}}'
         . 'function ipmiProxyIloLiveConsoleNotYetReached(ctx){try{return !ipmiProxyIloHasLiveDisplayEvidence(ctx)&&!kvmIloRcWindowAny();}catch(e){return true;}}'
         . 'function ipmiProxyIloHelperActivityPresent(){try{var e=performance.getEntriesByType("resource"),i,u;for(i=0;i<e.length;i++){u=String(e[i].name||"").toLowerCase();if(u.indexOf("jnlp_template")>=0||u.indexOf("jnlp")>=0&&u.indexOf(".html")>=0)return true;if(u.indexOf("/html/irc")>=0||u.indexOf("irc.html")>=0)return true;if(u.indexOf("rc_info")>=0)return true;}}catch(e0){}return false;}'
-        . 'function ipmiProxyIloHelperActivityCorrelatesWithConsoleReach(ctx){return ipmiProxyIloHelperActivityPresent()&&ipmiProxyIloHasLiveDisplayEvidence(ctx);}'
+        . 'function ipmiProxyIloHelperActivityCorrelatesWithConsoleReach(ctx){try{return ipmiProxyIloHelperActivityPresent()&&ipmiProxyIloHasLiveDisplayEvidence(ctx)&&!ipmiProxyIloApplicationLoadedShellOnly(ctx);}catch(e){return false;}}'
         . 'function ipmiProxyIloHelperActivityWithoutConsoleTransition(ctx){return ipmiProxyIloHelperActivityPresent()&&ipmiProxyIloManagementShellStillVisible(ctx);}'
         . 'function ipmiProxyIloDomSnapshotSig(w){try{var d=(w&&w.document)?w.document:document;if(!d||!d.body)return"e";var t=String(d.body.innerText||d.body.textContent||"").replace(/\\s+/g," ").trim();var la=0,lif=0;try{la=d.querySelectorAll("a[href]").length;}catch(_a){}try{lif=d.querySelectorAll("iframe,frame").length;}catch(_f){}return String(t.length)+":"+String(la)+":"+String(lif);}catch(e){return"e";}}'
         . 'function ipmiProxyIloLooksLikeShellOnlyUi(ctx){return ipmiProxyIloManagementShellStillVisible(ctx);}'
@@ -837,14 +845,14 @@ function ipmiProxyBuildKvmRuntimeProgressHelpersJs(): string
         . 'function ipmiProxyIloHelperAidedDiscovery(st){return !!(st&&st.helperAidedDiscovery);}'
         . 'function ipmiProxyIloArmLaunchOutcomeProbe(st,n,sig,ws,live){try{if(!st)return;st.pendingOutcomeCheck=n+5;st.launchSigBefore=sig||"";st.__wsBefore=!!ws;st.__liveBefore=!!live;}catch(e){}}'
         . 'function ipmiProxyIloRecordLaunchAttemptOutcome(st,sigBefore,wsBefore,liveBefore,tick){try{if(!st)return{effective:false,domChanged:false,wsUp:false,liveUp:false};var sig=ipmiProxyIloDomSnapshotSig(window);var ws=kvmIloWsTransportEvidence();var live=ipmiProxyIloHasLiveDisplayEvidence(window);var domChanged=(sigBefore&&sig&&sig!==sigBefore);var wsUp=(!wsBefore&&ws);var liveUp=(!liveBefore&&live);var effective=domChanged||wsUp||liveUp;try{ipmiProxyIloLaunchDiscoveryStateStore({sig_before:sigBefore||"",sig_after:sig,dom_changed:domChanged?1:0,ws_before:wsBefore?1:0,ws_after:ws?1:0,live_before:liveBefore?1:0,live_after:live?1:0,effective:effective?1:0,tick:tick||0,ts:Date.now()});}catch(_ss){}if(!effective){try{_kvmDbg("ilo_launch_action_no_effect",{tick:tick,dom_changed:domChanged?1:0,ws:ws?1:0,live:live?1:0});}catch(_ne){}}return {effective:effective,domChanged:domChanged,wsUp:wsUp,liveUp:liveUp};}catch(e){return{effective:false,domChanged:false,wsUp:false,liveUp:false};}}'
-        . 'function ipmiProxyIloConsoleReadinessVerdict(p){try{p=p||{};if(p.fin)return"live_console_strongly_confirmed";if(p.launchFailed)return"launch_discovery_failed";if(p.noEffect)return"launch_action_no_effect";if(p.whiteStall)return"launch_discovery_failed";if(p.specShell&&!p.discoveryStarted)return"shell_autolaunch_allowed";if(p.specShell&&p.discoveryStarted&&!p.transport&&!p.live&&p.shellEscalationConsumed&&p.mgmtVisible)return"console_start_failed_no_transport";if(p.specShell&&p.discoveryStarted&&!p.transport&&!p.live&&p.sessReady===false&&p.launchTried)return"console_start_failed_no_session_ready";return p.inProgress||"launch_discovery_in_progress";}catch(e){return"unknown";}}'
+        . 'function ipmiProxyIloConsoleReadinessVerdict(p){try{p=p||{};if(p.fin)return"native_console_strongly_confirmed";if(p.launchFailed)return"launch_discovery_failed";if(p.noEffect)return"launch_action_no_effect";if(p.whiteStall)return"launch_discovery_failed";if(p.specShell&&!p.discoveryStarted)return"shell_autolaunch_allowed";if(p.specShell&&p.discoveryStarted&&!p.transport&&!p.live&&p.shellEscalationConsumed&&p.mgmtVisible)return"console_start_failed_no_transport";if(p.specShell&&p.discoveryStarted&&!p.transport&&!p.live&&p.sessReady===false&&p.launchTried)return"console_start_failed_no_session_ready";return p.inProgress||"launch_discovery_in_progress";}catch(e){return"unknown";}}'
         . 'function ipmiProxyIloFinalizeReadinessFromDiscovery(st,verdict,detail){try{if(!st)return;st.finalDiscoveryVerdict=String(verdict||"");try{ipmiProxyIloLaunchDiscoveryStateStore({final_discovery_verdict:st.finalDiscoveryVerdict,detail:String(detail||""),ts:Date.now()});}catch(_fs){}try{_kvmDbg("ilo_console_readiness_verdict",{verdict:st.finalDiscoveryVerdict,detail:String(detail||""),discovery:1});}catch(_fd){}}catch(e){}}'
         . 'function ipmiProxyIloLooksLikeManagementShellOnly(ctx){return ipmiProxyIloManagementShellStillVisible(ctx);}'
         . 'function ipmiProxyIloHasOnlyShellUi(ctx){return ipmiProxyIloManagementShellStillVisible(ctx);}'
         . 'function ipmiProxyIloShouldRejectShellAsConsoleSuccess(ctx,st){return ipmiProxyIloManagementShellStillVisible(ctx)&&!kvmIloWsTransportEvidence();}'
         . 'function ipmiProxyIloShouldRejectShellOnlyAsStrongConfirmation(ctx){var live=ipmiProxyIloHasLiveDisplayEvidence(ctx);return ipmiProxyIloManagementShellStillVisible(ctx)||(ipmiProxyIloHelperActivityPresent()&&!live);}'
         . 'function ipmiProxyIloCanStronglyConfirmLiveConsole(ctx,st){var probe={finStable:st?st.finStable||0:0};var r=kvmIloReadyToFinalize(ctx,probe);return !!(r&&r.ok);}'
-        . 'function ipmiProxyIloFinalizeStrongConfirmationFromVisibleUi(ctx,st,rf){var v=(rf&&rf.ok)?"live_console_strongly_confirmed":(rf&&rf.why?String(rf.why):"console_not_ready");try{ipmiProxyIloShellVsConsoleStateStore({final_verdict:v,finalize:rf||{},ts:Date.now()});}catch(e){}return rf;}'
+        . 'function ipmiProxyIloFinalizeStrongConfirmationFromVisibleUi(ctx,st,rf){var v=(rf&&rf.ok)?"native_console_strongly_confirmed":(rf&&rf.why?String(rf.why):"console_not_ready");try{ipmiProxyIloShellVsConsoleStateStore({final_verdict:v,finalize:rf||{},live_console_visible:rf&&rf.ok?1:0,native_console_strongly_confirmed:rf&&rf.ok?1:0,ts:Date.now()});}catch(e){}return rf;}'
         . 'function kvmIloSessionReadyEvidence(ctx){'
         . 'try{'
         . 'if(ipmiProxyIloHasLiveDisplayEvidence(ctx))return true;'
@@ -862,7 +870,7 @@ function ipmiProxyBuildKvmRuntimeProgressHelpersJs(): string
         . 'var mgmt=ipmiProxyIloManagementShellStillVisible(ctx);'
         . 'var ov=false;try{var _d=(ctx&&ctx.document)?ctx.document:document;ov=ipmiProxyIloLooksLikeOverviewShell(_d);}catch(_ov){}'
         . 'if(load)return {ok:false,why:"loading_only_state",loading_only:1};'
-        . 'if(mgmt&&!live){var why=ov?"shell_only_management_ui":(ipmiProxyIloApplicationPathLoaded()?"application_loaded_console_not_reached":"shell_only_management_ui");return {ok:false,why:why,shell_only:1,management_shell_still_visible:1,app_path:ipmiProxyIloApplicationPathLoaded()?1:0,overview_shell:ov?1:0};}'
+        . 'if(mgmt&&!live){var why="shell_only_management_ui",app=ipmiProxyIloApplicationPathLoaded();if(app&&ov)why="native_console_route_reached_but_shell_only";else if(app)why="application_loaded_console_not_reached";else if(ov)why="shell_only_management_ui";return {ok:false,why:why,shell_only:1,management_shell_still_visible:1,app_path:app?1:0,overview_shell:ov?1:0,native_route_not_ready:app&&!live?1:0};}'
         . 'if(!ws)return {ok:false,why:"no_relay_transport"};'
         . 'if(!live)return {ok:false,why:"transport_without_live_display"};'
         . 'st.finStable=(st.finStable||0)+1;'
@@ -895,7 +903,7 @@ function ipmiProxyBuildIloKvmScript(): string
         . 'var pl=pathLower();'
         . 'if(pl.indexOf("/html/rc_info.html")!==-1&&!hasIloRendererHost(window)&&(!window.parent||window.parent===window)){go("/html/application.html?ipmi_kvm_auto=1");return;}'
         . 'var n=0,max=Math.max(220,Math.ceil(KVM_TMO/220));'
-        . 'var iloSt={phase:0,lastProgress:kvmNow(),clicks:0,phaseClickRounds:0,navAttempts:0,reported:{boot:false,launch:false,trans:false,inter:false,rContainer:false,rDetected:false,wsEv:false,sessR:false,bootstrap:false,fin:false,stuck:false,noTrans:false,noSess:false,stuckEsc:false,stuckFin:false,interWhileLoad:false,liveDispEv:false,loadingClearedEv:false,appPath:false,overview:false,helperSeen:false,helperNoTx:false,helperCorr:false},finStable:0,ldSince:0,ldDbg:false,ldPerDbg:false,esc:0,stall:false,lastVerdict:"console_starting",prevVerdict:"",corrDbg:false,specShell:false,discoveryStarted:false,menuExpanded:false,discEsc:0,discNavTriggered:false,anyLaunchAction:false,launchDiscoveryFailed:false,discTriggered:false,funcFound:false,frameNavDone:false,delayedRescanDone:false,earlyDiscDone:false,prevLd:false,shellFailDbg:false,loadFailDbg:false,shellEscalationConsumed:false,discoveryEscalationKind:"",finalDiscoveryVerdict:"",launchSurfaceFound:false,whiteStallReported:false,helperReg:false,helperAidedDiscovery:false,launchNoEffectReported:false,pendingOutcomeCheck:-1,launchSigBefore:"",__wsBefore:false,__liveBefore:false,discoveryOutcomeLogged:false,helperNoTargetDbg:false,shellOnlyUiDbg:false};'
+        . 'var iloSt={phase:0,lastProgress:kvmNow(),clicks:0,phaseClickRounds:0,navAttempts:0,reported:{boot:false,launch:false,trans:false,inter:false,rContainer:false,rDetected:false,wsEv:false,sessR:false,bootstrap:false,fin:false,stuck:false,noTrans:false,noSess:false,stuckEsc:false,stuckFin:false,interWhileLoad:false,liveDispEv:false,loadingClearedEv:false,appPath:false,overview:false,helperSeen:false,helperNoTx:false,helperCorr:false,consoleFrameFollowed:false},finStable:0,ldSince:0,ldDbg:false,ldPerDbg:false,esc:0,stall:false,lastVerdict:"console_starting",prevVerdict:"",corrDbg:false,specShell:false,discoveryStarted:false,menuExpanded:false,discEsc:0,discNavTriggered:false,anyLaunchAction:false,launchDiscoveryFailed:false,discTriggered:false,funcFound:false,frameNavDone:false,delayedRescanDone:false,earlyDiscDone:false,prevLd:false,shellFailDbg:false,loadFailDbg:false,shellEscalationConsumed:false,discoveryEscalationKind:"",finalDiscoveryVerdict:"",launchSurfaceFound:false,whiteStallReported:false,helperReg:false,helperAidedDiscovery:false,launchNoEffectReported:false,pendingOutcomeCheck:-1,launchSigBefore:"",__wsBefore:false,__liveBefore:false,discoveryOutcomeLogged:false,helperNoTargetDbg:false,shellOnlyUiDbg:false,helperNoConfirmDbg:false,consoleModDbg:false,contentFrameVisDbg:false,appConsoleLaunchTried:false};'
         . '(function tick(){'
         . 'n++;'
         . 'if(iloSt.pendingOutcomeCheck>0&&n>=iloSt.pendingOutcomeCheck){var _pc=iloSt.pendingOutcomeCheck;iloSt.pendingOutcomeCheck=-1;var _or=ipmiProxyIloRecordLaunchAttemptOutcome(iloSt,iloSt.launchSigBefore,iloSt.__wsBefore,iloSt.__liveBefore,n);if(iloSt.specShell&&!_or.effective&&!iloSt.launchNoEffectReported){iloSt.launchNoEffectReported=true;try{_kvmDbg("ilo_launch_discovery_failed",{reason:"launch_action_no_effect"});ipmiProxyIloFinalizeReadinessFromDiscovery(iloSt,"launch_action_no_effect","post_click_no_dom_ws_live_change");}catch(_of){}}}'
@@ -922,7 +930,8 @@ function ipmiProxyBuildIloKvmScript(): string
         . 'if(kvmIloRendererOrContainerPresent(ctx[i])&&!iloSt.reported.rContainer){iloSt.reported.rContainer=true;kvmTouchProgress(iloSt);_kvmDbg("ilo_renderer_container_detected",1);}'
         . 'if(kvmIloRendererDetected(ctx[i])&&!iloSt.reported.rDetected){iloSt.reported.rDetected=true;kvmTouchProgress(iloSt);try{var _ldR=kvmIloLoadingPleaseWaitAny();_kvmDbg("ilo_renderer_detected",{loading:_ldR?1:0,hint:_ldR?"not_console_success":""});}catch(edr){_kvmDbg("ilo_renderer_detected",1);}}'
         . 'if(kvmIloInteractiveLikely(ctx[i])){if(!iloSt.reported.inter){iloSt.reported.inter=true;try{var _ldH=kvmIloLoadingPleaseWaitAny();_kvmDbg("ilo_console_interactive_likely",{loading:_ldH?1:0,hint:_ldH?"not_final_success":""});if(_ldH&&!iloSt.reported.interWhileLoad){iloSt.reported.interWhileLoad=true;_kvmDbg("ilo_console_interactive_likely_while_loading",{note:"shell_only_not_interactive_ready"});}}catch(eilh){_kvmDbg("ilo_console_interactive_likely",1);}}kvmTouchProgress(iloSt);}'
-        . '}catch(eic){}}'
+        . '}catch(eic){}'
+        . '}'
         . 'var wsNow=kvmIloWsTransportEvidence();'
         . 'if(wsNow){kvmTouchProgress(iloSt);if(!iloSt.reported.wsEv){iloSt.reported.wsEv=true;iloSt.reported.trans=true;try{_kvmDbg("ilo_transport_evidence_detected",1);_kvmDbg("ilo_console_transport_started",1);_kvmDbg("ilo_transport_detected",1);}catch(et0){}}}'
         . 'if(iloSt.specShell&&n===24&&!iloSt.shellEscalationConsumed&&!wsNow){var plx2=pathLower();if((plx2.indexOf("/index.html")>=0||plx2.indexOf("/restgui/")>=0||plx2==="/"||plx2==="")&&!rcPage){var _ek=tryShellDiscoveryEscalationOnce(ctx,iloSt);if(_ek==="href"){ipmiProxyIloArmLaunchOutcomeProbe(iloSt,n,sigEarly,wsEarly,liveEarly);}if(_ek==="spa"){return;}}}'
@@ -937,10 +946,16 @@ function ipmiProxyBuildIloKvmScript(): string
         . 'if(mgmtNow&&!liveNow&&(n%12)===0){try{_kvmDbg("ilo_management_shell_still_visible",{tick:n,app_path:appPathNow?1:0,overview:overviewNow?1:0});}catch(_msv){}}'
         . 'if(helperNow&&!iloSt.reported.helperSeen){iloSt.reported.helperSeen=true;try{_kvmDbg("ilo_helper_activity_seen",1);}catch(_hs){}}'
         . 'if(helperNow){ipmiProxyIloRegisterLaunchHelperSignal(iloSt);}'
+        . 'if(appPathNow&&!liveNow&&ipmiProxyIloApplicationLoadedShellOnly(window)&&(n%6)===2){try{_kvmDbg("ilo_application_loaded_shell_only",{tick:n,overview:overviewNow?1:0,helper:helperNow?1:0});}catch(_aso){}}'
+        . 'if(appPathNow&&overviewNow&&!liveNow&&(n%8)===4){try{_kvmDbg("ilo_console_not_reached_after_application_load",{tick:n,helper:helperNow?1:0,transport:wsNow?1:0});}catch(_cnr){}}'
+        . 'if(appPathNow&&!liveNow&&(n%7)===3){for(var _aft=0;_aft<ctx.length;_aft++){try{if(ctx[_aft].document&&ipmiProxyIloFollowConsoleFrameTransition(ctx[_aft].document,iloSt))break;}catch(_fe){}}}'
+        . 'if(appPathNow&&!liveNow&&n>6&&(n%5)===0&&!iloSt.appConsoleLaunchTried){for(var _bi=0;_bi<ctx.length;_bi++){try{var _doc2=ctx[_bi].document;if(!_doc2)continue;var _mod=ipmiProxyIloFindConsoleModuleInApplication(_doc2);if(_mod&&!iloSt.consoleModDbg){iloSt.consoleModDbg=true;_kvmDbg("ilo_console_module_detected",{tick:n});}var _act=ipmiProxyIloFindConsoleLaunchActionInApplication(_doc2);if(_act){_kvmDbg("ilo_console_launch_action_found",{tick:n});try{var _didA=false;if(typeof _act.click==="function"){_act.click();_didA=true;}else if(_doc2.createEvent){var _evx=_doc2.createEvent("MouseEvents");_evx.initEvent("click",true,true);_act.dispatchEvent(_evx);_didA=true;}if(_didA){iloSt.appConsoleLaunchTried=true;iloSt.discTriggered=true;iloSt.anyLaunchAction=true;kvmTouchProgress(iloSt);_kvmDbg("ilo_console_launch_action_triggered",{});ipmiProxyIloArmLaunchOutcomeProbe(iloSt,n,sigEarly,wsEarly,liveEarly);break;}}catch(_acl){}}}catch(_lp){}}}'
+        . 'try{var _rootd=document;if(_rootd&&ipmiProxyIloConsoleContentFrameVisible(_rootd)&&!iloSt.contentFrameVisDbg){iloSt.contentFrameVisDbg=true;_kvmDbg("ilo_console_content_frame_visible",{where:"root"});}for(var _ci=0;_ci<ctx.length;_ci++){try{var _d3=ctx[_ci].document;if(_d3&&ipmiProxyIloConsoleContentFrameVisible(_d3)&&!iloSt.contentFrameVisDbg){iloSt.contentFrameVisDbg=true;_kvmDbg("ilo_console_content_frame_visible",{where:"ctx",idx:_ci});break;}}catch(_cfv){}}}catch(_cfv0){}'
+        . 'if(helperNow&&mgmtNow&&!liveNow&&!iloSt.helperNoConfirmDbg&&n>18){iloSt.helperNoConfirmDbg=true;try{if(ipmiProxyIloHelperActivitySupportsButDoesNotConfirm(window))_kvmDbg("ilo_helper_success_not_counted_as_console_success",{helper:1,management_shell:mgmtNow?1:0,app_path:appPathNow?1:0,overview:overviewNow?1:0});}catch(_hnc){}}'
         . 'if(helperNow&&iloSt.specShell&&n>22&&!iloSt.launchSurfaceFound&&!iloSt.discTriggered&&!iloSt.helperNoTargetDbg){iloSt.helperNoTargetDbg=true;try{_kvmDbg("ilo_launch_helper_seen_but_no_target_found",{tick:n});_kvmDbg("ilo_no_launch_target_found",{reason:"helper_without_surface",tick:n});}catch(_hnt0){}}'
         . 'if(helperNow&&mgmtNow&&!liveNow&&!iloSt.reported.helperNoTx){iloSt.reported.helperNoTx=true;try{_kvmDbg("ilo_helper_activity_without_console_transition",{overview:overviewNow?1:0});_kvmDbg("ilo_console_not_reached",1);}catch(_hnt){}}'
         . 'if(helperNow&&liveNow&&!iloSt.reported.helperCorr){iloSt.reported.helperCorr=true;try{_kvmDbg("ilo_helper_activity_correlated_with_console_reach",1);}catch(_hc){}}'
-        . 'if(liveNow&&!iloSt.reported.liveDispEv){iloSt.reported.liveDispEv=true;try{_kvmDbg("ilo_live_display_evidence_detected",{route:routeNow?1:0});_kvmDbg("ilo_live_console_visible",1);_kvmDbg("ilo_console_viewport_active",1);var _cd=document;var _anyCv=false;try{if(_cd&&ipmiProxyIloCanvasLooksActive(_cd))_anyCv=true;}catch(_c0){}if(_anyCv)_kvmDbg("ilo_console_canvas_active",1);var _b2=ipmiProxyIloShellVsConsoleStateLoad()||{};_b2.live_console_visible=1;ipmiProxyIloShellVsConsoleStateStore(_b2);}catch(_lde){}}'
+        . 'if(liveNow&&!iloSt.reported.liveDispEv){iloSt.reported.liveDispEv=true;try{_kvmDbg("ilo_live_display_evidence_detected",{route:routeNow?1:0});_kvmDbg("ilo_live_console_visible",1);_kvmDbg("ilo_live_console_display_visible",{route:routeNow?1:0,overview_still:overviewNow?1:0});_kvmDbg("ilo_console_viewport_active",1);var _cd=document;var _anyCv=false;try{if(_cd&&ipmiProxyIloCanvasLooksActive(_cd))_anyCv=true;}catch(_c0){}if(_anyCv)_kvmDbg("ilo_console_canvas_active",1);var _b2=ipmiProxyIloShellVsConsoleStateLoad()||{};_b2.live_console_visible=1;_b2.live_console_display_visible=1;ipmiProxyIloShellVsConsoleStateStore(_b2);}catch(_lde){}}'
         . 'if(mgmtNow&&!liveNow&&!ldNow&&(n%16)===0){try{_kvmDbg("ilo_shell_only_visible",{app_path:appPathNow?1:0,overview:overviewNow?1:0});}catch(_sov){}}'
         . 'if(iloSt.specShell&&shellOnlyNow&&!liveNow&&!wsNow&&n>10&&!iloSt.shellOnlyUiDbg){iloSt.shellOnlyUiDbg=true;try{_kvmDbg("ilo_shell_only_ui_detected",{tick:n,transport:wsNow?1:0});}catch(_sui){}}'
         . 'if(iloSt.specShell&&ipmiProxyIloLooksLikeWhiteScreenStall(n,iloSt)&&!iloSt.whiteStallReported){iloSt.whiteStallReported=true;try{_kvmDbg("ilo_white_screen_stall_detected",{tick:n,disc_nav:iloSt.discNavTriggered?1:0});_kvmDbg("ilo_stalled_before_transport",{white_screen:1});ipmiProxyIloFinalizeReadinessFromDiscovery(iloSt,"launch_discovery_failed","white_screen_stall");}catch(_wss){}}'
@@ -955,7 +970,7 @@ function ipmiProxyBuildIloKvmScript(): string
         . 'if(rAny&&ldNow&&!wsNow&&iloSt.ldSince&&(ldMs)>36000&&!iloSt.corrDbg){iloSt.corrDbg=true;try{_kvmDbg("ilo_console_startup_stall_correlated",{reason:"prolonged_loading_no_transport",ms:ldMs});}catch(ec2){}}'
         . 'if(rAny&&ldNow&&iloSt.ldSince&&(ldMs)>40000&&!iloSt.reported.stuck){iloSt.reported.stuck=true;iloSt.lastVerdict="console_stuck_loading";try{if(!wsNow){_kvmDbg("ilo_console_stuck_loading",{reason:"prolonged_loading_no_transport",ms:ldMs});_kvmDbg("ilo_console_readiness_verdict",{verdict:"console_start_failed_no_transport",detail:"no_ws_after_renderer",ms:ldMs});}else{_kvmDbg("ilo_console_stuck_loading",{reason:"prolonged_loading_with_transport",ms:ldMs,session_ready:iloSt.reported.sessR?1:0});_kvmDbg("ilo_console_readiness_verdict",{verdict:"console_stuck_loading",detail:"loading_with_ws_or_session_stall",ms:ldMs});}_kvmDbg("ilo_loading_state_escalated",{ms:ldMs,esc:iloSt.esc});if(iloSt.esc>=1){_kvmDbg("ilo_stuck_loading_finalized",{esc:iloSt.esc,verdict:"console_stuck_loading"});}}catch(est){}}'
         . 'var rf=kvmIloReadyToFinalize(window,iloSt);'
-        . 'if(rf.ok&&!iloSt.reported.fin){iloSt.reported.fin=true;iloSt.lastVerdict="console_interactive_confirmed";try{ipmiProxyIloFinalizeStrongConfirmationFromVisibleUi(window,iloSt,rf);_kvmDbg("ilo_strong_confirmation_achieved",{why:rf.why||""});_kvmDbg("ilo_user_visible_console_success",{why:rf.why||"",strong_confirmation:1,live_display:liveNow?1:0,transport:wsNow?1:0});_kvmDbg("ilo_confirmation_strong",{tier:"interactive_confirmed",source:"finalize"});_kvmDbg("ilo_console_interactive_confirmed",rf);_kvmDbg("ilo_console_readiness_verdict",{verdict:"console_interactive_confirmed",why:rf.why||"",native_console_confirmation:"live_console_strongly_confirmed",live_display:liveNow?1:0,management_shell_visible:mgmtNow?1:0,overview_shell:overviewNow?1:0});markDone();return;}catch(emf){}}'
+        . 'if(rf.ok&&!iloSt.reported.fin){iloSt.reported.fin=true;iloSt.lastVerdict="console_interactive_confirmed";try{ipmiProxyIloFinalizeStrongConfirmationFromVisibleUi(window,iloSt,rf);_kvmDbg("ilo_strong_confirmation_achieved",{why:rf.why||""});_kvmDbg("ilo_user_visible_console_success",{why:rf.why||"",strong_confirmation:1,live_display:liveNow?1:0,transport:wsNow?1:0});_kvmDbg("ilo_confirmation_strong",{tier:"native_console_strongly_confirmed",source:"finalize"});_kvmDbg("ilo_console_interactive_confirmed",rf);_kvmDbg("ilo_console_readiness_verdict",{verdict:"native_console_strongly_confirmed",why:rf.why||"",native_console_confirmation:"native_console_strongly_confirmed",live_display:liveNow?1:0,management_shell_visible:mgmtNow?1:0,overview_shell:overviewNow?1:0});markDone();return;}catch(emf){}}'
         . 'var started=false,rcReady=rcPage||btnFound;'
         . 'if(rcReady||iloSt.specShell){'
         . 'if(iloSt.phase===0){var directTop=getIloDirectTopRenderer(window);if(directTop){if(!iloSt.funcFound){iloSt.funcFound=true;try{_kvmDbg("ilo_launch_function_found",{src:"directTop"});}catch(_ff0){}}_kvmDbg("ilo_direct_renderer_attempt",1);if(callStart(directTop)){started=true;iloSt.anyLaunchAction=true;iloSt.discTriggered=true;iloSt.clicks++;iloSt.phase=1;kvmTouchProgress(iloSt);try{_kvmDbg("ilo_launch_function_invoked","direct");_kvmDbg("ilo_launch_triggered",{how:"callStart_direct",clicks:iloSt.clicks});if(iloSt.specShell)ipmiProxyIloArmLaunchOutcomeProbe(iloSt,n,sigEarly,wsEarly,liveEarly);}catch(e0){}}}}'
@@ -986,7 +1001,7 @@ function ipmiProxyBuildIloKvmScript(): string
         . 'else if(rAny&&wsNow)vNext="console_transport_pending";'
         . 'if(vNext==="console_starting"&&iloSt.specShell&&!iloSt.anyLaunchAction&&!wsNow&&!iloSt.launchDiscoveryFailed&&n>4)vNext="launch_discovery_in_progress";'
         . 'iloSt.lastVerdict=vNext;'
-        . 'if(iloSt.lastVerdict!==iloSt.prevVerdict){iloSt.prevVerdict=iloSt.lastVerdict;try{var _ltf=(iloSt.anyLaunchAction||rcPage||btnFound||iloSt.launchSurfaceFound)?1:0;var _lat=(iloSt.discTriggered||iloSt.discNavTriggered)?1:0;var _lae=iloSt.launchNoEffectReported?0:1;var _tHint=(wsNow&&liveNow&&!ldNow&&!mgmtNow&&!overviewNow)?"live_console_strongly_confirmed":(routeNow&&!liveNow?"application_loaded_console_not_reached":"native_console_not_confirmed");if(appPathNow&&!liveNow&&!overviewNow)_tHint="application_loaded_console_not_reached";if(overviewNow&&!liveNow)_tHint="shell_only_management_ui";_kvmDbg("ilo_console_readiness_verdict",{verdict:iloSt.lastVerdict,ws:wsNow?1:0,transport_evidence:wsNow?1:0,transport_started:wsNow?1:0,session_ready:iloSt.reported.sessR?1:0,load:ldNow?1:0,loading_persisted:(ldNow&&ldMs>12000)?1:0,loading_ms:ldNow?ldMs:0,rContainer:rAny?1:0,renderer_container:rAny?1:0,session_ready_evidence:iloSt.reported.sessR?1:0,sess:iloSt.reported.sessR?1:0,speculative_shell:iloSt.specShell?1:0,shell_autolaunch_initial_phase:(iloSt.lastVerdict==="shell_autolaunch_allowed")?1:0,launch_discovery_started:iloSt.discoveryStarted?1:0,launch_surface_found:iloSt.launchSurfaceFound?1:0,launch_target_found:_ltf,launch_action_triggered:_lat,launch_action_effective:_lae,launch_outcome_probe_pending:(iloSt.pendingOutcomeCheck>0)?1:0,launch_discovery:iloSt.discoveryStarted?1:0,any_launch_action:iloSt.anyLaunchAction?1:0,clicks:iloSt.clicks,disc_nav:iloSt.discNavTriggered?1:0,shell_escalation_consumed:iloSt.shellEscalationConsumed?1:0,white_screen_stall:iloSt.whiteStallReported?1:0,final_discovery_verdict:iloSt.lastVerdict,shell_only_ui:shellOnlyNow?1:0,management_shell_visible:mgmtNow?1:0,overview_shell:overviewNow?1:0,application_path_loaded:appPathNow?1:0,helper_activity:helperNow?1:0,helper_aided_discovery:iloSt.helperAidedDiscovery?1:0,live_display_evidence:liveNow?1:0,native_route_reached:routeNow?1:0,native_console_tier_hint:_tHint});}catch(ev){}}'
+        . 'if(iloSt.lastVerdict!==iloSt.prevVerdict){iloSt.prevVerdict=iloSt.lastVerdict;try{var _ltf=(iloSt.anyLaunchAction||rcPage||btnFound||iloSt.launchSurfaceFound)?1:0;var _lat=(iloSt.discTriggered||iloSt.discNavTriggered)?1:0;var _lae=iloSt.launchNoEffectReported?0:1;var _tHint=(wsNow&&liveNow&&!ldNow&&!mgmtNow&&!overviewNow)?"native_console_strongly_confirmed":(routeNow&&!liveNow?"application_loaded_console_not_reached":"native_console_not_confirmed");if(appPathNow&&!liveNow&&overviewNow)_tHint="native_console_route_reached_but_shell_only";else if(appPathNow&&!liveNow&&!overviewNow)_tHint="application_loaded_console_not_reached";if(overviewNow&&!liveNow&&!appPathNow)_tHint="shell_only_management_ui";if(routeNow&&!liveNow&&!mgmtNow)_tHint="native_console_route_reached_not_ready";_kvmDbg("ilo_console_readiness_verdict",{verdict:iloSt.lastVerdict,ws:wsNow?1:0,transport_evidence:wsNow?1:0,transport_started:wsNow?1:0,session_ready:iloSt.reported.sessR?1:0,load:ldNow?1:0,loading_persisted:(ldNow&&ldMs>12000)?1:0,loading_ms:ldNow?ldMs:0,rContainer:rAny?1:0,renderer_container:rAny?1:0,session_ready_evidence:iloSt.reported.sessR?1:0,sess:iloSt.reported.sessR?1:0,speculative_shell:iloSt.specShell?1:0,shell_autolaunch_initial_phase:(iloSt.lastVerdict==="shell_autolaunch_allowed")?1:0,launch_discovery_started:iloSt.discoveryStarted?1:0,launch_surface_found:iloSt.launchSurfaceFound?1:0,launch_target_found:_ltf,launch_action_triggered:_lat,launch_action_effective:_lae,launch_outcome_probe_pending:(iloSt.pendingOutcomeCheck>0)?1:0,launch_discovery:iloSt.discoveryStarted?1:0,any_launch_action:iloSt.anyLaunchAction?1:0,clicks:iloSt.clicks,disc_nav:iloSt.discNavTriggered?1:0,shell_escalation_consumed:iloSt.shellEscalationConsumed?1:0,white_screen_stall:iloSt.whiteStallReported?1:0,final_discovery_verdict:iloSt.lastVerdict,shell_only_ui:shellOnlyNow?1:0,management_shell_visible:mgmtNow?1:0,overview_shell:overviewNow?1:0,application_path_loaded:appPathNow?1:0,application_loaded_shell_only:ipmiProxyIloApplicationLoadedShellOnly(window)?1:0,helper_activity:helperNow?1:0,helper_aided_discovery:iloSt.helperAidedDiscovery?1:0,helper_correlated_with_visible_console:ipmiProxyIloHelperActivityCorrelatesWithConsoleReach(window)?1:0,live_display_evidence:liveNow?1:0,native_route_reached:routeNow?1:0,native_console_tier_hint:_tHint});}catch(ev){}}'
         . 'if(iloSt.stall){return;}'
         . 'if(hitMax){try{_kvmDbg("ilo_console_stalled",{ticks:n,reason:"max_ticks",launch_discovery_failed:iloSt.launchDiscoveryFailed?1:0,no_transport:!iloSt.reported.trans?1:0});if(iloSt.launchDiscoveryFailed){_kvmDbg("ilo_console_readiness_verdict",{verdict:"launch_discovery_failed",reason:"max_ticks",transport_started:wsNow?1:0,launch_target_found:(iloSt.anyLaunchAction||rcPage||btnFound)?1:0,launch_action_triggered:(iloSt.discTriggered||iloSt.discNavTriggered)?1:0});}}catch(em){}return;}'
         . 'setTimeout(tick,250);'
@@ -1185,6 +1200,63 @@ function ipmiProxyValidateGeneratedIloJs(string $fullPatchJs): array
     return $out;
 }
 
+/** @return array{ok: bool, reason: string, depth: int, bytes: int} */
+function ipmiProxyValidateGeneratedJs(string $fullPatchJs): array
+{
+    return ipmiProxyValidateGeneratedIloJs($fullPatchJs);
+}
+
+/**
+ * Remove proxy token and similar material from generated JS before writing debug artifacts.
+ */
+function ipmiProxyRedactSensitiveFromGeneratedJs(string $js, string $token): string
+{
+    if ($token !== '' && preg_match('/^[a-f0-9]{64}$/', $token)) {
+        $js = str_replace($token, '<redacted-token>', $js);
+    }
+
+    return (string) preg_replace('#/ipmi_proxy\\.php/[a-f0-9]{64}#i', '/ipmi_proxy.php/<redacted-token>', $js);
+}
+
+/**
+ * When validation fails, persist a redacted excerpt for offline inspection (debug only).
+ */
+function ipmiProxyDumpInvalidGeneratedJsContext(string $js, string $reason, int $depth, string $token): void
+{
+    if (!ipmiProxyDebugEnabled()) {
+        return;
+    }
+    $redacted = ipmiProxyRedactSensitiveFromGeneratedJs($js, $token);
+    $hash = substr(sha1($redacted), 0, 8);
+    $path = rtrim(sys_get_temp_dir(), '/') . '/ipmi_ilo_runtime_js_invalid_' . gmdate('Ymd_His') . '_' . $hash . '.log';
+    $head = substr($redacted, 0, 6000);
+    $tail = strlen($redacted) > 12000 ? substr($redacted, -6000) : '';
+    $payload = 'reason=' . $reason . "\ndepth=" . (string) $depth . "\nbytes=" . (string) strlen($js) . "\n--- head ---\n"
+        . $head . "\n--- tail ---\n" . $tail . "\n";
+    if (@file_put_contents($path, $payload) !== false) {
+        ipmiProxyDebugLog('ilo_runtime_js_invalid_dump_written', [
+            'path'   => $path,
+            'reason' => $reason,
+            'depth'  => $depth,
+        ]);
+    }
+}
+
+/**
+ * Full autolaunch runtime body (preamble + shared helpers + vendor branches + IIFE closer).
+ */
+function ipmiProxyBuildIloRuntimeJs(string $familyJs, string $planJs, string $pxJs, string $autoJs, string $dbgLit): string
+{
+    return ipmiProxyBuildKvmAutoLaunchPreambleJs($familyJs, $planJs, $pxJs, $autoJs, $dbgLit)
+        . ipmiProxyBuildKvmAutoLaunchIloDomHelpersJs()
+        . ipmiProxyBuildKvmRuntimeProgressHelpersJs()
+        . ipmiProxyBuildKvmAutoLaunchLaunchGateJs()
+        . ipmiProxyBuildIloKvmScript()
+        . ipmiProxyBuildIdracKvmScript()
+        . ipmiProxyBuildSupermicroKvmScript()
+        . '})();';
+}
+
 /**
  * @param array<string, mixed> $session
  * @return array<string, mixed>
@@ -1311,10 +1383,17 @@ function ipmiProxyIloLaunchDiscoveryReadinessVerdict(array $session, array $brow
 
 /**
  * @param array<string, mixed>|string $sessionOrLegacyBmcType Full web session array, or legacy BMC type string (limited plan quality).
+ * @param array<string, mixed>|null $injectOut Optional; receives inject outcome: mode full|safe_fallback|skipped_duplicate, js_ok, js_reason, js_depth.
  */
-function ipmiProxyInjectKvmAutoLaunchPatch(string $html, string $token, $sessionOrLegacyBmcType, bool $kvmAutoFlow = false, ?array $launchPlan = null, ?mysqli $persistKvmPlanMysqli = null): string
+function ipmiProxyInjectKvmAutoLaunchPatch(string $html, string $token, $sessionOrLegacyBmcType, bool $kvmAutoFlow = false, ?array $launchPlan = null, ?mysqli $persistKvmPlanMysqli = null, ?array &$injectOut = null): string
 {
+    $injectMeta = ['mode' => 'pending', 'js_ok' => null, 'js_reason' => '', 'js_depth' => 0];
     if (stripos($html, 'data-ipmi-proxy-kvm-autolaunch') !== false) {
+        $injectMeta = ['mode' => 'skipped_duplicate', 'js_ok' => null, 'js_reason' => '', 'js_depth' => 0];
+        if ($injectOut !== null) {
+            $injectOut = $injectMeta;
+        }
+
         return $html;
     }
     if (!is_array($sessionOrLegacyBmcType)) {
@@ -1405,34 +1484,74 @@ function ipmiProxyInjectKvmAutoLaunchPatch(string $html, string $token, $session
             'suppression' => $sup,
         ]);
     }
-    $autoLaunchBody = ipmiProxyBuildKvmAutoLaunchPreambleJs($familyJs, $planJs, $pxJs, $autoJs, $dbgLit)
-        . ipmiProxyBuildKvmAutoLaunchIloDomHelpersJs()
-        . ipmiProxyBuildKvmRuntimeProgressHelpersJs()
-        . ipmiProxyBuildKvmAutoLaunchLaunchGateJs()
-        . ipmiProxyBuildIloKvmScript()
-        . ipmiProxyBuildIdracKvmScript()
-        . ipmiProxyBuildSupermicroKvmScript()
-        . '})();';
+    $autoLaunchBody = ipmiProxyBuildIloRuntimeJs($familyJs, $planJs, $pxJs, $autoJs, $dbgLit);
 
-    $scriptOpen = '<script data-ipmi-proxy-kvm-autolaunch="1">';
     if (ipmiProxyDebugEnabled()) {
         ipmiProxyDebugLog('ilo_runtime_js_generation_started', [
             'vendor_family' => (string) ($plan['vendor_family'] ?? ''),
             'bytes'         => strlen($autoLaunchBody),
         ]);
-        $jsVal = ipmiProxyValidateGeneratedIloJs($autoLaunchBody);
+    }
+    $jsVal = ipmiProxyValidateGeneratedIloJs($autoLaunchBody);
+    if (ipmiProxyDebugEnabled()) {
         ipmiProxyDebugLog($jsVal['ok'] ? 'ilo_runtime_js_generation_validated' : 'ilo_runtime_js_generation_invalid', [
             'ok'     => $jsVal['ok'] ? 1 : 0,
             'reason' => $jsVal['reason'],
             'depth'  => $jsVal['depth'],
             'bytes'  => $jsVal['bytes'],
         ]);
-        $scriptOpen = '<script data-ipmi-proxy-kvm-autolaunch="1"'
-            . ' data-ipmi-kvm-js-valid="' . ($jsVal['ok'] ? '1' : '0') . '"'
-            . ' data-ipmi-kvm-js-reason="' . htmlspecialchars((string) $jsVal['reason'], ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') . '">';
+        if ($jsVal['ok']) {
+            ipmiProxyDebugLog('ilo_runtime_js_generation_fixed', [
+                'inject_builder' => 'for_try_scope_application_shell_v2',
+                'bytes'          => $jsVal['bytes'],
+            ]);
+        }
     }
 
+    if (!$jsVal['ok']) {
+        ipmiProxyDumpInvalidGeneratedJsContext($autoLaunchBody, (string) $jsVal['reason'], (int) $jsVal['depth'], $token);
+        if (ipmiProxyDebugEnabled()) {
+            ipmiProxyDebugLog('ilo_runtime_js_injection_aborted', [
+                'reason' => $jsVal['reason'],
+                'depth'  => $jsVal['depth'],
+                'bytes'  => $jsVal['bytes'],
+            ]);
+            ipmiProxyDebugLog('ilo_runtime_js_safe_fallback_used', [
+                'reason' => $jsVal['reason'],
+            ]);
+        }
+        $injectMeta = [
+            'mode'       => 'safe_fallback',
+            'js_ok'      => false,
+            'js_reason'  => (string) $jsVal['reason'],
+            'js_depth'   => (int) $jsVal['depth'],
+        ];
+        $scriptOpen = '<script data-ipmi-proxy-kvm-autolaunch="1" data-ipmi-kvm-js-valid="0" data-ipmi-kvm-patch-mode="safe_fallback"'
+            . (ipmiProxyDebugEnabled()
+                ? (' data-ipmi-kvm-js-reason="' . htmlspecialchars((string) $jsVal['reason'], ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') . '"')
+                : '')
+            . '>';
+        $stubBody = '(function(){try{if(typeof console!=="undefined"&&console.warn)console.warn("ilo_runtime_patch_disabled_due_to_invalid_js");}catch(e){}})();';
+        $patch = $scriptOpen . $stubBody . '</script>';
+
+        if ($injectOut !== null) {
+            $injectOut = $injectMeta;
+        }
+
+        return ipmiProxyInjectIntoHtmlHeadOrBody($html, $patch);
+    }
+
+    $injectMeta = [
+        'mode'      => 'full',
+        'js_ok'     => true,
+        'js_reason' => '',
+        'js_depth'  => 0,
+    ];
+    $scriptOpen = '<script data-ipmi-proxy-kvm-autolaunch="1" data-ipmi-kvm-js-valid="1" data-ipmi-kvm-patch-mode="full">';
     $patch = $scriptOpen . $autoLaunchBody . '</script>';
+    if ($injectOut !== null) {
+        $injectOut = $injectMeta;
+    }
 
     return ipmiProxyInjectIntoHtmlHeadOrBody($html, $patch);
 }
@@ -1975,6 +2094,71 @@ function ipmiProxyStripMetaCsp(string $html): string
         '',
         $html
     ) ?? $html;
+}
+
+if (PHP_SAPI === 'cli' && ($p = getenv('IPMI_DUMP_ILO_DOM_JS_PATH')) !== false && $p !== '') {
+    $domonly = '(function(){' . ipmiProxyBuildKvmAutoLaunchIloDomHelpersJs() . '})();';
+    file_put_contents($p, $domonly . "\n");
+    exit(0);
+}
+
+if (PHP_SAPI === 'cli' && getenv('IPMI_VALIDATE_KVM_JS_DOM') === '1') {
+    $domonly = '(function(){' . ipmiProxyBuildKvmAutoLaunchIloDomHelpersJs() . '})();';
+    $bd = ipmiProxyValidateGeneratedJsBraceBalance($domonly);
+    fwrite(STDERR, "ilo_dom_wrapped\t" . json_encode($bd, JSON_UNESCAPED_UNICODE) . "\n");
+    $tmp = rtrim(sys_get_temp_dir(), '/') . '/ipmi_kvm_dom_validate_' . bin2hex(random_bytes(4)) . '.js';
+    if (@file_put_contents($tmp, $domonly) !== false) {
+        passthru('node --check ' . escapeshellarg($tmp) . ' 2>&1', $nodeDom);
+        @unlink($tmp);
+        fwrite(STDERR, "ilo_dom_node_check\t" . ($nodeDom === 0 ? "ok" : "fail") . "\n");
+    }
+    exit(($bd['ok'] && (int) $bd['depth'] === 0) ? 0 : 1);
+}
+
+if (PHP_SAPI === 'cli' && getenv('IPMI_VALIDATE_KVM_JS') === '1') {
+    $je = JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_UNESCAPED_SLASHES;
+    $familyJs = json_encode('ilo', $je);
+    $planJs = json_encode([
+        'vendor_family'                => 'ilo',
+        'speculative_shell_autolaunch'   => false,
+        'console_ready_timeout_ms'       => 45000,
+        'should_attempt_proxy_autolaunch'=> true,
+        'kvm_entry_path'                => '/html/application.html',
+        'launch_strategy'               => 'ilo_application_force_html5',
+    ], $je);
+    $pxJs = json_encode('/ipmi_proxy.php/' . str_repeat('a', 64), $je);
+    $dbgLit = 'true';
+    $segments = [
+        'preamble' => ipmiProxyBuildKvmAutoLaunchPreambleJs($familyJs, $planJs, $pxJs, 'false', $dbgLit),
+        'ilo_dom'    => ipmiProxyBuildKvmAutoLaunchIloDomHelpersJs(),
+        'progress'   => ipmiProxyBuildKvmRuntimeProgressHelpersJs(),
+        'launch_gate'=> ipmiProxyBuildKvmAutoLaunchLaunchGateJs(),
+        'ilo_tick'   => ipmiProxyBuildIloKvmScript(),
+        'idrac'      => ipmiProxyBuildIdracKvmScript(),
+        'supermicro' => ipmiProxyBuildSupermicroKvmScript(),
+        'closer'     => '})();',
+    ];
+    $acc = '';
+    foreach ($segments as $name => $chunk) {
+        $acc .= $chunk;
+        $b = ipmiProxyValidateGeneratedJsBraceBalance($acc);
+        if (!$b['ok'] || (int) $b['depth'] !== 0) {
+            fwrite(STDERR, "brace_after_segment\t" . $name . "\t" . json_encode($b, JSON_UNESCAPED_UNICODE) . "\n");
+        }
+    }
+    $body = $acc;
+    $v = ipmiProxyValidateGeneratedIloJs($body);
+    fwrite(STDERR, json_encode($v, JSON_UNESCAPED_UNICODE) . "\n");
+    if (!$v['ok']) {
+        exit(1);
+    }
+    $tmp = rtrim(sys_get_temp_dir(), '/') . '/ipmi_kvm_runtime_validate_' . bin2hex(random_bytes(4)) . '.js';
+    if (@file_put_contents($tmp, $body) === false) {
+        exit(0);
+    }
+    passthru('node --check ' . escapeshellarg($tmp) . ' 2>/dev/null', $nodeCode);
+    @unlink($tmp);
+    exit($nodeCode === 0 ? 0 : 1);
 }
 
 // Default 30s max_execution_time kills mid-response after headers → Chrome ERR_CONNECTION_RESET + "200 (OK)".
@@ -7729,19 +7913,54 @@ if ($rewriteBody) {
         $shouldInjectKvmAutoPatch = ($httpCode >= 200 && $httpCode < 400) && $injectKvmPathOk;
         if ($shouldInjectKvmAutoPatch) {
             $launchPlanForPatch = ipmiWebResolveKvmLaunchPlan($session, $mysqli);
-            $responseBody = ipmiProxyInjectKvmAutoLaunchPatch($responseBody, $token, $session, $kvmAutoFlow, $launchPlanForPatch, $mysqli);
+            $kvmAutolaunchInjectMeta = [];
+            $responseBody = ipmiProxyInjectKvmAutoLaunchPatch(
+                $responseBody,
+                $token,
+                $session,
+                $kvmAutoFlow,
+                $launchPlanForPatch,
+                $mysqli,
+                $kvmAutolaunchInjectMeta
+            );
             if (ipmiProxyDebugEnabled()) {
                 ipmiProxyDebugLog('kvm_launch_plan_selected', array_merge(
                     ['trace' => $ipmiTraceId, 'bmcPath' => $bmcPath],
                     ipmiWebKvmPlanLogSummary($launchPlanForPatch)
                 ));
-                ipmiProxyDebugLog('kvm_autolaunch_patch_injected', [
+                $kvmInjMode = (string) ($kvmAutolaunchInjectMeta['mode'] ?? '');
+                if ($kvmInjMode === 'full') {
+                    ipmiProxyDebugLog('kvm_autolaunch_patch_injected', [
+                        'trace' => $ipmiTraceId,
+                        'bmcPath' => $bmcPath,
+                        'bmcType' => $bmcTypeStr,
+                        'vendor_family' => $launchPlanForPatch['vendor_family'] ?? '',
+                        'kvm_entry_path' => $launchPlanForPatch['kvm_entry_path'] ?? '',
+                        'kvmAutoFlow' => $kvmAutoFlow ? 1 : 0,
+                    ]);
+                } elseif ($kvmInjMode === 'safe_fallback') {
+                    ipmiProxyDebugLog('kvm_autolaunch_patch_injection_safe_fallback_only', [
+                        'trace' => $ipmiTraceId,
+                        'bmcPath' => $bmcPath,
+                        'bmcType' => $bmcTypeStr,
+                        'vendor_family' => $launchPlanForPatch['vendor_family'] ?? '',
+                        'js_reason' => $kvmAutolaunchInjectMeta['js_reason'] ?? '',
+                        'js_depth' => $kvmAutolaunchInjectMeta['js_depth'] ?? 0,
+                    ]);
+                }
+                $injPath = strtolower((string) parse_url($bmcPath, PHP_URL_PATH));
+                ipmiProxyDebugLog('kvm_autolaunch_inject_summary', [
                     'trace' => $ipmiTraceId,
                     'bmcPath' => $bmcPath,
-                    'bmcType' => $bmcTypeStr,
-                    'vendor_family' => $launchPlanForPatch['vendor_family'] ?? '',
-                    'kvm_entry_path' => $launchPlanForPatch['kvm_entry_path'] ?? '',
-                    'kvmAutoFlow' => $kvmAutoFlow ? 1 : 0,
+                    'inject_mode' => $kvmInjMode,
+                    'runtime_js_valid' => ($kvmAutolaunchInjectMeta['js_ok'] ?? null) === true ? 1 : (($kvmAutolaunchInjectMeta['js_ok'] ?? null) === false ? 0 : null),
+                    'js_syntactically_valid' => ($kvmAutolaunchInjectMeta['js_ok'] ?? null) === true ? 'yes' : (($kvmAutolaunchInjectMeta['js_ok'] ?? null) === false ? 'no' : 'unknown'),
+                    'runtime_patch_injected' => $kvmInjMode === 'full' ? 'yes' : 'no',
+                    'runtime_patch_injected_full' => $kvmInjMode === 'full' ? 1 : 0,
+                    'runtime_patch_stub_only' => $kvmInjMode === 'safe_fallback' ? 1 : 0,
+                    'inject_target_application_path' => str_contains($injPath, '/html/application.html') ? 'yes' : 'no',
+                    'inject_target_shell_index' => ($injPath === '' || $injPath === '/' || str_contains($injPath, '/index.html') || str_contains($injPath, '/restgui/')) ? 'yes' : 'no',
+                    'js_reason' => (string) ($kvmAutolaunchInjectMeta['js_reason'] ?? ''),
                 ]);
             }
         }
@@ -7835,15 +8054,26 @@ if (ipmiProxyDebugEnabled()) {
         $ncDbg = is_array($session['session_meta']['ilo_native_console_confirmation'] ?? null)
             ? $session['session_meta']['ilo_native_console_confirmation'] : null;
         if (is_array($ncDbg)) {
-            $iloDbgExtra['ilo_native_console_confirmation'] = [
+            $brDbg = is_array($ncDbg['browser'] ?? null) ? $ncDbg['browser'] : [];
+        $iloNcRow = [
                 'tier' => (string) ($ncDbg['tier'] ?? ''),
                 'final_debug_verdict'    => (string) ($ncDbg['final_debug_verdict'] ?? ''),
+                'final_strong_native_console' => ((string) ($ncDbg['final_debug_verdict'] ?? '') === 'native_console_strongly_confirmed') ? 'yes' : 'no',
                 'confidence'             => (int) ($ncDbg['confidence'] ?? 0),
                 'transport_started'      => !empty($ncDbg['transport_started']) ? 1 : 0,
                 'session_ready'          => !empty($ncDbg['session_ready']) ? 1 : 0,
                 'live_display_confirmed' => !empty($ncDbg['live_display_confirmed']) ? 1 : 0,
                 'shell_only_signal'      => !empty($ncDbg['shell_only_signal']) ? 1 : 0,
+                'browser_overlay_persisted' => $brDbg !== [] ? 'yes' : 'no',
             ];
+        if ($brDbg !== []) {
+            $iloNcRow['browser_application_path_loaded'] = !empty($brDbg['application_path_loaded']) ? 'yes' : 'no';
+            $iloNcRow['browser_shell_only_ui'] = !empty($brDbg['shell_only_ui']) ? 'yes' : 'no';
+            $iloNcRow['browser_overview_shell'] = !empty($brDbg['overview_shell']) ? 'yes' : 'no';
+            $iloNcRow['browser_helper_activity'] = !empty($brDbg['helper_activity']) ? 'yes' : 'no';
+            $iloNcRow['browser_live_display'] = (!empty($brDbg['live_display']) || !empty($brDbg['live_display_confirmed'])) ? 'yes' : 'no';
+        }
+        $iloDbgExtra['ilo_native_console_confirmation'] = $iloNcRow;
         }
         $iloPrFinal = ipmiProxyClassifyIloPathRoleForSession($mysqli, $token, $session, $bmcPath, $method, $ipmiTraceId);
         $iloDbgExtra['ilo_path_role'] = (string) ($iloPrFinal['role'] ?? '');

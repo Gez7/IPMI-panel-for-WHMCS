@@ -6331,8 +6331,9 @@ function ipmiWebIloNativeConsoleTierEvaluate(array $s): array
         $reasons[] = 'session_ready';
     }
 
-    // Strong confirmation: never infer from capability or shell alone; requires both transport and live display signals.
-    $strongInteractive = $transport && $liveDisp && !$loading;
+    // Strong confirmation: never infer from capability, Overview/shell-only, or helper noise alone;
+    // requires relay transport plus visible live display with loading cleared.
+    $strongInteractive = $transport && $liveDisp && !$loading && !$shellOnly;
     if ($strongInteractive) {
         $tier = 'interactive_confirmed';
         $reasons[] = 'transport_live_display_no_loading';

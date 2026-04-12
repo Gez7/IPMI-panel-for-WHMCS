@@ -64,10 +64,16 @@
  * ilo_launch_helper_{seen,aided_discovery,seen_but_no_target_found}, ilo_launch_discovery_server_updated.
  * iLO strict native-console confirmation (capability vs reach vs session vs live display): ilo_confirmation_signals_collected,
  * ilo_confirmation_{weak_only,reached_not_ready,strong}, ilo_confirmation_failed_{shell_only,loading_only},
- * ilo_runtime_js_generation_{started,validated,invalid} (brace / tail sanity on injected autolaunch;
- *   with proxy debug, injected &lt;script&gt; also carries data-ipmi-kvm-js-valid and data-ipmi-kvm-js-reason),
- * ilo_application_path_loaded, ilo_overview_shell_detected, ilo_management_shell_{detected,still_visible}, ilo_shell_only_visible,
- * ilo_live_console_visible, ilo_helper_activity_{seen,without_console_transition,correlated_with_console_reach}, ilo_console_not_reached,
+ * ilo_runtime_js_generation_{started,validated,invalid,fixed} (brace / tail sanity on injected autolaunch; fixed emitted when validation passes;
+ *   ilo_runtime_js_invalid_dump_written, ilo_runtime_js_injection_aborted, ilo_runtime_js_safe_fallback_used on stub path;
+ *   kvm_autolaunch_inject_summary (inject path flags, js_syntactically_valid yes/no, runtime_patch_injected yes/no, stub vs application.html target),
+ *   ilo_kvm_runtime_debug_matrix (browser: js_valid / patch injected / application_path_loaded_now from currentScript + pathLower),
+ *   with proxy debug, injected &lt;script&gt; also carries data-ipmi-kvm-js-valid, data-ipmi-kvm-patch-mode, data-ipmi-kvm-js-reason on stub),
+ * ilo_application_path_loaded, ilo_application_loaded_shell_only, ilo_console_not_reached_after_application_load,
+ * ilo_overview_shell_detected, ilo_management_shell_{detected,still_visible}, ilo_shell_only_visible,
+ * ilo_console_module_detected, ilo_console_launch_action_{found,triggered}, ilo_console_content_frame_{visible,followed},
+ * ilo_live_console_{visible,display_visible}, ilo_helper_activity_{seen,without_console_transition,correlated_with_console_reach},
+ * ilo_helper_success_not_counted_as_console_success, ilo_console_not_reached,
  * ilo_strong_confirmation_{rejected_shell_only,achieved} (visible live console + relay transport required; Overview shell excluded),
  * ilo_live_display_evidence_detected, ilo_console_{canvas_active,viewport_active},
  * ilo_loading_only_state_{present,cleared}, ilo_user_visible_console_success (strong confirmation only).
