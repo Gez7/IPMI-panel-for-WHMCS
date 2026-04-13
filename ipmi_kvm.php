@@ -10,6 +10,7 @@ require_once __DIR__ . '/config.php';
 require_once __DIR__ . '/lib/login_redirect.php';
 require_once __DIR__ . '/lib/ipmi_web_session.php';
 require_once __DIR__ . '/lib/ipmi_proxy_debug.php';
+require_once __DIR__ . '/lib/ipmi_kvm_buglog.php';
 
 if (!isset($_SESSION['user_id'])) {
     ipmiRedirectUnauthenticatedToLogin();
@@ -30,6 +31,7 @@ $error = '';
 $launchUrl = null;
 $launchPath = null;
 $launchPlan = null;
+$kvmBugAttemptBegan = false;
 
 try {
     if ($serverId <= 0) {
@@ -41,6 +43,8 @@ try {
 
     ipmiWebCleanupExpiredSessions($mysqli);
     $sessionData = ipmiWebCreateSession($mysqli, $serverId, $userId, $role, 7200);
+    ipmiKvmBugLogBeginPanelAttempt($serverId);
+    $kvmBugAttemptBegan = true;
 
     $launchPlan = ipmiWebResolveKvmLaunchPlan($sessionData, $mysqli);
     if ((string) ($launchPlan['delivery_tier'] ?? '') === 'kvm_unavailable'
@@ -50,6 +54,29 @@ try {
     }
     $launchPath = (string) ($launchPlan['kvm_entry_path'] ?? '/');
     $launchUrl = ipmiWebBuildProxyUrlWithDelivery((string) $sessionData['token'], $launchPath, $launchPlan);
+    $tok = strtolower((string) $sessionData['token']);
+    $runId = ipmiKvmBugLogStartRun([
+        'token'            => $tok,
+        'panel_entry'      => 'ipmi_kvm.php?id=' . $serverId,
+        'service_id'       => (string) $serverId,
+        'bmc_type'         => (string) ($sessionData['bmc_type'] ?? ''),
+        'vendor_family'    => (string) ($launchPlan['vendor_family'] ?? ''),
+        'bmc_host'         => (string) ($sessionData['ipmi_ip'] ?? ''),
+        'selected_path'    => $launchPath,
+        'strategy'         => (string) ($launchPlan['launch_strategy'] ?? ''),
+        'capability'       => (string) ($launchPlan['console_capability'] ?? ''),
+        'native_verdict'   => (string) ($launchPlan['ilo_native_console_verdict'] ?? ''),
+        'delivery_tier'    => (string) ($launchPlan['delivery_tier'] ?? ''),
+        'user_facing_mode' => (string) ($launchPlan['user_facing_kvm_mode'] ?? ''),
+    ]);
+    ipmiWebSessionMetaMutate($mysqli, $tok, static function (array &$meta) use ($runId, $tok): void {
+        $meta['kvm_buglog_run'] = [
+            'v'            => 1,
+            'run_id'       => $runId,
+            'token_suffix' => substr($tok, -8),
+            'started_utc'  => gmdate('c') . 'Z',
+        ];
+    });
     if ($debugProxy) {
       $launchUrl .= (str_contains($launchUrl, '?') ? '&' : '?') . 'ipmi_proxy_debug=1';
       $summary = ipmiWebKvmPlanLogSummary($launchPlan);
@@ -62,6 +89,13 @@ try {
     }
 } catch (Throwable $e) {
     $error = $e->getMessage();
+    if ($kvmBugAttemptBegan) {
+        $enc = json_encode(
+            ['message' => substr($error, 0, 400)],
+            JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE
+        );
+        ipmiKvmBugLogAppendSection('SERVER', 'event: kvm_panel_launch_failed | detail: ' . (is_string($enc) ? $enc : '{}'));
+    }
 }
 
 $title = 'KVM Console';

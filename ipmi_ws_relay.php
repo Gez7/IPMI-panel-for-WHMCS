@@ -13,23 +13,27 @@ session_start();
 require_once __DIR__ . '/config.php';
 require_once __DIR__ . '/lib/ipmi_web_session.php';
 require_once __DIR__ . '/lib/ipmi_proxy_debug.php';
+require_once __DIR__ . '/lib/ipmi_kvm_buglog.php';
 
 // ---------------------------------------------------------------------------
 // Helper: structured debug log
 // ---------------------------------------------------------------------------
 function ipmiWsRelayDebugEvent(string $event, array $detail = []): void
 {
-    if (!function_exists('ipmiProxyDebugEnabled') || !ipmiProxyDebugEnabled()) {
-        return;
-    }
-    $parts = [$event];
-    foreach ($detail as $k => $v) {
-        if (is_bool($v)) {
-            $v = $v ? '1' : '0';
+    if (function_exists('ipmiProxyDebugEnabled') && ipmiProxyDebugEnabled()) {
+        $parts = [$event];
+        foreach ($detail as $k => $v) {
+            if (is_bool($v)) {
+                $v = $v ? '1' : '0';
+            }
+            $parts[] = $k . '=' . (string) $v;
         }
-        $parts[] = $k . '=' . (string) $v;
+        error_log(implode(' ', $parts));
     }
-    error_log(implode(' ', $parts));
+    $tok = $GLOBALS['__ipmi_ws_relay_buglog_token'] ?? null;
+    if (is_string($tok) && preg_match('/^[a-f0-9]{64}$/', $tok) && function_exists('ipmiKvmBugLogRelayDebugEvent')) {
+        ipmiKvmBugLogRelayDebugEvent($tok, $event, $detail);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -149,6 +153,11 @@ function ipmiWsRelayParseTarget(string $raw): ?array
 // ---------------------------------------------------------------------------
 function ipmiWsRelayErrorResponse(int $httpCode, string $stage, string $message, array $extra = []): never
 {
+    ipmiWsRelayDebugEvent('ipmi_ws_relay_http_error_exit', [
+        'http_code' => $httpCode,
+        'stage'     => $stage,
+        'message'   => substr($message, 0, 220),
+    ]);
     http_response_code($httpCode);
     header('Content-Type: application/json');
     $body = array_merge([
@@ -168,6 +177,8 @@ $token = strtolower(trim((string) ($_GET['token'] ?? '')));
 if (!preg_match('/^[a-f0-9]{64}$/', $token)) {
     ipmiWsRelayErrorResponse(400, 'token_validation', 'Invalid token');
 }
+
+$GLOBALS['__ipmi_ws_relay_buglog_token'] = $token;
 
 $session = ipmiWebLoadSession($mysqli, $token);
 if (!$session) {
@@ -275,6 +286,14 @@ if ($envCheck['verdict'] === 'unsupported') {
         'environment' => $envCheck,
     ]);
 }
+
+ipmiWsRelayDebugEvent('ipmi_ws_relay_environment_evaluated', [
+    'sapi'        => (string) ($envCheck['sapi'] ?? ''),
+    'verdict'     => (string) ($envCheck['verdict'] ?? ''),
+    'can_flush'   => !empty($envCheck['can_flush']) ? '1' : '0',
+    'can_input'   => !empty($envCheck['can_input']) ? '1' : '0',
+    'notes_join'  => implode('|', $envCheck['notes'] ?? []),
+]);
 
 ipmiWsRelayDebugEvent('ipmi_ws_relay_browser_handshake_started', [
     'sapi' => PHP_SAPI,
@@ -518,6 +537,7 @@ $relayStartTs    = microtime(true);
 $lastActivityTs  = microtime(true);
 $idleTimeoutSec  = 300;
 $pumpErrors      = 0;
+$firstFrameSeen  = false;
 
 ipmiWsRelayDebugEvent('ipmi_ws_relay_frame_pump_started', [
     'sapi'         => PHP_SAPI,
@@ -566,6 +586,13 @@ while (!feof($remote) && time() < $deadline) {
         if ($stream === $remote) {
             $bytesFromBmc += strlen($data);
             $framesBmc++;
+            if (!$firstFrameSeen && strlen($data) > 0) {
+                $firstFrameSeen = true;
+                ipmiWsRelayDebugEvent('ipmi_ws_relay_first_frame_observed', [
+                    'from'  => 'bmc',
+                    'bytes' => strlen($data),
+                ]);
+            }
             $written = @fwrite($clientOut, $data);
             if ($written === false) {
                 ipmiWsRelayDebugEvent('ipmi_ws_relay_frame_pump_error', [
