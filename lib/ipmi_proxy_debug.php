@@ -72,6 +72,12 @@
  * ilo_console_readiness_reclassified, ilo_console_start_failed_no_launch_target, ilo_launch_discovery_server_finalized,
  * session _m.ilo_launch_discovery (ipmiProxyIloLaunchDiscoveryState* / ipmiProxyIloLaunchDiscoveryReadinessVerdict),
  * ilo_launch_helper_{seen,aided_discovery,seen_but_no_target_found}, ilo_launch_discovery_server_updated.
+ * WebSocket relay (server error_log, when IPMI_PROXY_DEBUG): ipmi_ws_relay_request_received, ipmi_ws_relay_browser_handshake_{started,succeeded,failed,accepting},
+ * ipmi_ws_relay_upstream_{connect_started,tls_connected,tls_failed,tcp_connected,upstream_ws_handshake_succeeded,upstream_ws_handshake_failed},
+ * ipmi_ws_relay_frame_pump_{started,error,idle_timeout,eof}, ipmi_ws_relay_closed, ipmi_ws_relay_relay_environment_unsupported.
+ * Browser KVM transport health: ipmi_ws_relay_client_open, ipmi_ws_relay_handshake_ok, ipmi_ws_relay_handshake_error, ipmi_ws_relay_first_frame,
+ * ilo_transport_health_{provisional,confirmed,failed}, ilo_transport_{handshake_ok,handshake_failed,frame_flow_started},
+ * ilo_strong_confirmation_rejected_transport_unhealthy, ilo_native_console_strongly_confirmed (strong success only after relay frame flow).
  * iLO strict native-console confirmation (capability vs reach vs session vs live display): ilo_confirmation_signals_collected,
  * ilo_confirmation_{weak_only,reached_not_ready,strong}, ilo_confirmation_failed_{shell_only,loading_only},
  * ilo_runtime_js_generation_{started,validated,invalid,fixed} (brace / tail sanity on injected autolaunch; fixed emitted when validation passes;

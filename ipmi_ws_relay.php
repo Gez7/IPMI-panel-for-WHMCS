@@ -22,7 +22,7 @@ function ipmiWsRelayDebugEvent(string $event, array $detail = []): void
     if (!function_exists('ipmiProxyDebugEnabled') || !ipmiProxyDebugEnabled()) {
         return;
     }
-    $parts = ['ipmi_ws_relay: ' . $event];
+    $parts = [$event];
     foreach ($detail as $k => $v) {
         if (is_bool($v)) {
             $v = $v ? '1' : '0';
@@ -49,6 +49,10 @@ function ipmiWsRelayEnvironmentSupportsUpgrade(): array
         $notes[] = 'CLI SAPI cannot serve HTTP upgrades';
     }
 
+    if (stripos($sapi, 'apache') !== false) {
+        $notes[] = 'Apache SAPI: if frame pump shows 0 bytes in ipmi_ws_relay_closed while browser shows open, inspect output buffering / mod_php raw stream support';
+    }
+
     if (!$canFlush) {
         $notes[] = 'ob_end_flush not available';
     }
@@ -66,6 +70,47 @@ function ipmiWsRelayEnvironmentSupportsUpgrade(): array
 // ---------------------------------------------------------------------------
 // Helper: parse and validate the target URL
 // ---------------------------------------------------------------------------
+/**
+ * Validate browser WebSocket upgrade headers and compute Sec-WebSocket-Accept
+ * from the *client's* Sec-WebSocket-Key (RFC 6455). Upstream BMC uses a separate key.
+ *
+ * @return array{accept: string, key: string}
+ */
+function ipmiWsRelayValidateBrowserUpgrade(): array
+{
+    $key = trim((string) ($_SERVER['HTTP_SEC_WEBSOCKET_KEY'] ?? ''));
+    $ver = trim((string) ($_SERVER['HTTP_SEC_WEBSOCKET_VERSION'] ?? ''));
+
+    if ($key === '') {
+        ipmiWsRelayDebugEvent('ipmi_ws_relay_browser_handshake_failed', [
+            'reason' => 'missing_sec_websocket_key',
+        ]);
+        ipmiWsRelayErrorResponse(400, 'relay_browser_handshake_failed', 'Missing Sec-WebSocket-Key');
+    }
+
+    $raw = base64_decode($key, true);
+    if ($raw === false || strlen($raw) !== 16) {
+        ipmiWsRelayDebugEvent('ipmi_ws_relay_browser_handshake_failed', [
+            'reason' => 'invalid_sec_websocket_key',
+        ]);
+        ipmiWsRelayErrorResponse(400, 'relay_browser_handshake_failed', 'Invalid Sec-WebSocket-Key');
+    }
+
+    if ($ver !== '13') {
+        ipmiWsRelayDebugEvent('ipmi_ws_relay_browser_handshake_failed', [
+            'reason' => 'unsupported_version',
+            'version' => $ver,
+        ]);
+        ipmiWsRelayErrorResponse(426, 'relay_browser_handshake_failed', 'Sec-WebSocket-Version 13 required', [
+            'sec_websocket_version' => $ver,
+        ]);
+    }
+
+    $accept = base64_encode(sha1($key . '258EAFA5-E914-47DA-95CA-5AB5DC11653B', true));
+
+    return ['key' => $key, 'accept' => $accept];
+}
+
 function ipmiWsRelayParseTarget(string $raw): ?array
 {
     if ($raw === '') {
@@ -196,7 +241,7 @@ $isWsUpgrade = (
     && stripos((string) $_SERVER['HTTP_UPGRADE'], 'websocket') !== false
 );
 
-ipmiWsRelayDebugEvent('request_received', [
+ipmiWsRelayDebugEvent('ipmi_ws_relay_request_received', [
     'method'         => ($_SERVER['REQUEST_METHOD'] ?? 'unknown'),
     'upgrade'        => ($_SERVER['HTTP_UPGRADE'] ?? 'none'),
     'connection'     => ($_SERVER['HTTP_CONNECTION'] ?? 'none'),
@@ -209,12 +254,13 @@ if (!$isWsUpgrade) {
     $env = ipmiWsRelayEnvironmentSupportsUpgrade();
     header('Content-Type: application/json');
     echo json_encode([
-        'status'      => 'ok',
-        'message'     => 'WebSocket relay endpoint. Connect with Upgrade: websocket header.',
-        'bmc_ip'      => $session['ipmi_ip'],
-        'sapi'        => PHP_SAPI,
-        'environment' => $env['verdict'],
-        'note'        => 'Send a real WebSocket upgrade to use this relay.',
+        'status'        => 'ok',
+        'message'       => 'WebSocket relay endpoint. Connect with Upgrade: websocket header.',
+        'bmc_ip'        => $session['ipmi_ip'],
+        'sapi'          => PHP_SAPI,
+        'environment'   => $env['verdict'],
+        'environment_notes' => $env['notes'],
+        'note'          => 'Send a real WebSocket upgrade to use this relay. Upstream BMC WS success/failure is logged server-side (ipmi_ws_relay_upstream_ws_*), not returned in this JSON.',
     ]);
     exit;
 }
@@ -224,17 +270,19 @@ if (!$isWsUpgrade) {
 // ---------------------------------------------------------------------------
 $envCheck = ipmiWsRelayEnvironmentSupportsUpgrade();
 if ($envCheck['verdict'] === 'unsupported') {
-    ipmiWsRelayDebugEvent('environment_unsupported', $envCheck);
+    ipmiWsRelayDebugEvent('ipmi_ws_relay_relay_environment_unsupported', $envCheck);
     ipmiWsRelayErrorResponse(503, 'environment_check', 'Runtime does not support WebSocket relay', [
         'environment' => $envCheck,
     ]);
 }
 
-ipmiWsRelayDebugEvent('browser_handshake_started', [
+ipmiWsRelayDebugEvent('ipmi_ws_relay_browser_handshake_started', [
     'sapi' => PHP_SAPI,
     'ws_key_present' => isset($_SERVER['HTTP_SEC_WEBSOCKET_KEY']),
     'ws_version' => ($_SERVER['HTTP_SEC_WEBSOCKET_VERSION'] ?? 'missing'),
 ]);
+
+$browserWs = ipmiWsRelayValidateBrowserUpgrade();
 
 // ---------------------------------------------------------------------------
 // 5. Parse and validate target
@@ -243,7 +291,7 @@ $targetRaw = trim((string) ($_GET['target'] ?? ''));
 $target = ipmiWsRelayParseTarget($targetRaw);
 
 if (!$target) {
-    ipmiWsRelayDebugEvent('target_invalid', ['raw_len' => strlen($targetRaw)]);
+    ipmiWsRelayDebugEvent('ipmi_ws_relay_target_invalid', ['raw_len' => strlen($targetRaw)]);
     ipmiWsRelayErrorResponse(400, 'target_validation', 'Invalid or missing target WebSocket URL');
 }
 
@@ -253,9 +301,9 @@ $bmcPort = $target['port'];
 $wsPath  = $target['path'];
 
 // ---------------------------------------------------------------------------
-// 6. Build upstream handshake
+// 6. Build upstream handshake (separate Sec-WebSocket-Key from browser)
 // ---------------------------------------------------------------------------
-$wsKey = base64_encode(random_bytes(16));
+$upstreamWsKey = base64_encode(random_bytes(16));
 $cookieHeader = ipmiWsBuildCookieHeader($session);
 $extraHeaders = ipmiWsBuildForwardHeaderLines($session);
 
@@ -278,7 +326,7 @@ $handshake = "GET {$wsPath} HTTP/1.1\r\n"
     . "Host: {$hostLine}\r\n"
     . "Upgrade: websocket\r\n"
     . "Connection: Upgrade\r\n"
-    . "Sec-WebSocket-Key: {$wsKey}\r\n"
+    . "Sec-WebSocket-Key: {$upstreamWsKey}\r\n"
     . "Sec-WebSocket-Version: 13\r\n"
     . "Origin: {$originLine}\r\n"
     . $protoLine
@@ -311,7 +359,7 @@ $connectSpec = $useTls
     ? 'ssl://' . $bmcIp . ':' . $bmcPort
     : 'tcp://' . $bmcIp . ':' . $bmcPort;
 
-ipmiWsRelayDebugEvent('upstream_connect_started', [
+ipmiWsRelayDebugEvent('ipmi_ws_relay_upstream_connect_started', [
     'spec'    => $connectSpec,
     'tls'     => $useTls,
     'bmc_ip'  => $bmcIp,
@@ -332,7 +380,7 @@ $connectMs = round((microtime(true) - $connectStart) * 1000);
 
 if (!$remote) {
     $stage = $useTls ? 'upstream_tls_failed' : 'upstream_tcp_failed';
-    ipmiWsRelayDebugEvent($stage, [
+    ipmiWsRelayDebugEvent('ipmi_ws_relay_' . $stage, [
         'errno'       => $errno,
         'err'         => substr((string) $errstr, 0, 200),
         'connect_ms'  => $connectMs,
@@ -344,7 +392,7 @@ if (!$remote) {
     ]);
 }
 
-ipmiWsRelayDebugEvent($useTls ? 'upstream_tls_connected' : 'upstream_tcp_connected', [
+ipmiWsRelayDebugEvent($useTls ? 'ipmi_ws_relay_upstream_tls_connected' : 'ipmi_ws_relay_upstream_tcp_connected', [
     'connect_ms' => $connectMs,
     'bmc_ip'     => $bmcIp,
     'port'       => $bmcPort,
@@ -380,7 +428,7 @@ if (preg_match('/HTTP\/\S+\s+(\d{3})\b/', $responseHeader, $hm)) {
 if ($upstreamHttpCode !== 101) {
     $firstLine = trim((string) strtok($responseHeader, "\n"));
     $hl = strtolower($responseHeader);
-    ipmiWsRelayDebugEvent('upstream_ws_handshake_failed', [
+    ipmiWsRelayDebugEvent('ipmi_ws_relay_upstream_ws_handshake_failed', [
         'upstream_http'    => $upstreamHttpCode,
         'first_line'       => substr($firstLine, 0, 120),
         'header_bytes'     => strlen($responseHeader),
@@ -396,7 +444,7 @@ if ($upstreamHttpCode !== 101) {
     ]);
 }
 
-ipmiWsRelayDebugEvent('upstream_ws_handshake_succeeded', [
+ipmiWsRelayDebugEvent('ipmi_ws_relay_upstream_ws_handshake_succeeded', [
     'upstream_http' => 101,
     'header_bytes'  => strlen($responseHeader),
     'header_read_ms' => $headerReadMs,
@@ -405,16 +453,16 @@ ipmiWsRelayDebugEvent('upstream_ws_handshake_succeeded', [
 ]);
 
 // ---------------------------------------------------------------------------
-// 10. Send 101 Switching Protocols to browser
+// 10. Send 101 Switching Protocols to browser (Accept from *client* key, RFC 6455)
 // ---------------------------------------------------------------------------
-$expectedAccept = base64_encode(sha1($wsKey . '258EAFA5-E914-47DA-95CA-5AB5DC11653B', true));
+$browserAccept = $browserWs['accept'];
 
 $bmcProto = '';
 if (preg_match('/Sec-WebSocket-Protocol:\s*([^\r\n]+)/i', $responseHeader, $spMatch)) {
     $bmcProto = trim($spMatch[1]);
 }
 
-ipmiWsRelayDebugEvent('browser_handshake_accepting', [
+ipmiWsRelayDebugEvent('ipmi_ws_relay_browser_handshake_accepting', [
     'sapi'         => PHP_SAPI,
     'bmc_proto'    => ($bmcProto !== '' ? $bmcProto : 'none'),
     'client_proto' => ($clientProto !== '' ? $clientProto : 'none'),
@@ -423,7 +471,7 @@ ipmiWsRelayDebugEvent('browser_handshake_accepting', [
 header('HTTP/1.1 101 Switching Protocols');
 header('Upgrade: websocket');
 header('Connection: Upgrade');
-header('Sec-WebSocket-Accept: ' . $expectedAccept);
+header('Sec-WebSocket-Accept: ' . $browserAccept);
 if ($bmcProto !== '') {
     header('Sec-WebSocket-Protocol: ' . $bmcProto);
 }
@@ -439,7 +487,7 @@ if (function_exists('apache_setenv')) {
 @ini_set('zlib.output_compression', '0');
 @ini_set('implicit_flush', '1');
 
-ipmiWsRelayDebugEvent('browser_handshake_succeeded', ['sapi' => PHP_SAPI]);
+ipmiWsRelayDebugEvent('ipmi_ws_relay_browser_handshake_succeeded', ['sapi' => PHP_SAPI]);
 
 // ---------------------------------------------------------------------------
 // 11. Frame pump
@@ -451,7 +499,7 @@ $clientIn  = fopen('php://input', 'rb');
 $clientOut = fopen('php://output', 'wb');
 
 if (!$clientIn || !$clientOut) {
-    ipmiWsRelayDebugEvent('client_streams_failed', [
+    ipmiWsRelayDebugEvent('ipmi_ws_relay_client_streams_failed', [
         'clientIn'  => (bool) $clientIn,
         'clientOut' => (bool) $clientOut,
     ]);
@@ -471,7 +519,7 @@ $lastActivityTs  = microtime(true);
 $idleTimeoutSec  = 300;
 $pumpErrors      = 0;
 
-ipmiWsRelayDebugEvent('frame_pump_started', [
+ipmiWsRelayDebugEvent('ipmi_ws_relay_frame_pump_started', [
     'sapi'         => PHP_SAPI,
     'deadline_sec' => 7200,
     'idle_timeout' => $idleTimeoutSec,
@@ -485,7 +533,7 @@ while (!feof($remote) && time() < $deadline) {
     $changed = @stream_select($read, $write, $except, 1, 0);
     if ($changed === false) {
         $pumpErrors++;
-        ipmiWsRelayDebugEvent('frame_pump_select_error', ['errors' => $pumpErrors]);
+        ipmiWsRelayDebugEvent('ipmi_ws_relay_frame_pump_error', ['kind' => 'select', 'errors' => $pumpErrors]);
         if ($pumpErrors > 10) {
             break;
         }
@@ -494,7 +542,7 @@ while (!feof($remote) && time() < $deadline) {
 
     if ($changed === 0) {
         if ((microtime(true) - $lastActivityTs) > $idleTimeoutSec) {
-            ipmiWsRelayDebugEvent('frame_pump_idle_timeout', [
+            ipmiWsRelayDebugEvent('ipmi_ws_relay_frame_pump_idle_timeout', [
                 'idle_sec' => round(microtime(true) - $lastActivityTs),
             ]);
             break;
@@ -507,7 +555,7 @@ while (!feof($remote) && time() < $deadline) {
         if ($data === false || $data === '') {
             if (feof($stream)) {
                 $who = ($stream === $remote) ? 'bmc' : 'client';
-                ipmiWsRelayDebugEvent('frame_pump_eof', ['side' => $who]);
+                ipmiWsRelayDebugEvent('ipmi_ws_relay_frame_pump_eof', ['side' => $who]);
                 break 2;
             }
             continue;
@@ -520,7 +568,8 @@ while (!feof($remote) && time() < $deadline) {
             $framesBmc++;
             $written = @fwrite($clientOut, $data);
             if ($written === false) {
-                ipmiWsRelayDebugEvent('frame_pump_client_write_failed', [
+                ipmiWsRelayDebugEvent('ipmi_ws_relay_frame_pump_error', [
+                    'kind' => 'client_write_failed',
                     'bytes_attempted' => strlen($data),
                 ]);
                 break 2;
@@ -531,7 +580,8 @@ while (!feof($remote) && time() < $deadline) {
             $framesClient++;
             $written = @fwrite($remote, $data);
             if ($written === false) {
-                ipmiWsRelayDebugEvent('frame_pump_upstream_write_failed', [
+                ipmiWsRelayDebugEvent('ipmi_ws_relay_frame_pump_error', [
+                    'kind' => 'upstream_write_failed',
                     'bytes_attempted' => strlen($data),
                 ]);
                 break 2;
@@ -546,7 +596,7 @@ while (!feof($remote) && time() < $deadline) {
 $elapsed = round(microtime(true) - $relayStartTs, 2);
 $healthy = ($bytesFromBmc > 0 && $bytesFromClient > 0);
 
-ipmiWsRelayDebugEvent('relay_closed', [
+ipmiWsRelayDebugEvent('ipmi_ws_relay_closed', [
     'elapsed_sec'      => $elapsed,
     'bytes_from_bmc'   => $bytesFromBmc,
     'bytes_from_client' => $bytesFromClient,
