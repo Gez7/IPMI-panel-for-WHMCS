@@ -100,12 +100,24 @@ $isWsUpgrade = (
     && stripos((string)$_SERVER['HTTP_UPGRADE'], 'websocket') !== false
 );
 
+if (function_exists('ipmiProxyDebugEnabled') && ipmiProxyDebugEnabled()) {
+    error_log('ipmi_ws_relay: request_received'
+        . ' method=' . ($_SERVER['REQUEST_METHOD'] ?? 'unknown')
+        . ' upgrade=' . ($_SERVER['HTTP_UPGRADE'] ?? 'none')
+        . ' connection=' . ($_SERVER['HTTP_CONNECTION'] ?? 'none')
+        . ' is_ws_upgrade=' . ($isWsUpgrade ? '1' : '0')
+        . ' sapi=' . PHP_SAPI
+        . ' target_present=' . (isset($_GET['target']) && $_GET['target'] !== '' ? '1' : '0'));
+}
+
 if (!$isWsUpgrade) {
     header('Content-Type: application/json');
     echo json_encode([
         'status'  => 'ok',
         'message' => 'WebSocket relay endpoint. Connect with Upgrade: websocket header.',
         'bmc_ip'  => $session['ipmi_ip'],
+        'sapi'    => PHP_SAPI,
+        'note'    => 'If WebSocket connections fail, check: 1) Apache mod_proxy_wstunnel or mod_headers allows Upgrade pass-through, 2) PHP runs as CGI/FPM not mod_php for raw socket relay, 3) BMC IP is reachable from this server.',
     ]);
     exit;
 }
@@ -185,6 +197,14 @@ if (function_exists('ipmiProxyDebugEnabled') && ipmiProxyDebugEnabled()) {
         . ' host_fwd=1 origin_fwd=1 host_kind=' . (filter_var($preferredHost, FILTER_VALIDATE_IP) ? 'ip' : 'name'));
 }
 
+if (function_exists('ipmiProxyDebugEnabled') && ipmiProxyDebugEnabled()) {
+    error_log('ipmi_ws_relay: connecting to ' . $connectSpec
+        . ' tls=' . ($useTls ? '1' : '0')
+        . ' bmc_ip=' . $bmcIp
+        . ' port=' . $bmcPort
+        . ' ws_path_len=' . strlen($wsPath));
+}
+
 $remote = @stream_socket_client(
     $connectSpec,
     $errno,
@@ -196,9 +216,11 @@ $remote = @stream_socket_client(
 
 if (!$remote) {
     if (function_exists('ipmiProxyDebugEnabled') && ipmiProxyDebugEnabled()) {
-        error_log('ipmi_ws_relay: tcp_connect_failed errno=' . (string) $errno . ' err=' . substr((string) $errstr, 0, 200));
+        error_log('ipmi_ws_relay: tcp_connect_failed errno=' . (string) $errno . ' err=' . substr((string) $errstr, 0, 200)
+            . ' connect_spec=' . $connectSpec);
     }
     http_response_code(502);
+    header('Content-Type: text/plain');
     echo 'Cannot connect to BMC WebSocket: ' . $errstr;
     exit;
 }
@@ -248,10 +270,25 @@ if (function_exists('ipmiProxyDebugEnabled') && ipmiProxyDebugEnabled()) {
 
 $expectedAccept = base64_encode(sha1($wsKey . '258EAFA5-E914-47DA-95CA-5AB5DC11653B', true));
 
+$serverProto = (string) ($_SERVER['HTTP_SEC_WEBSOCKET_VERSION'] ?? '');
+$bmcProto = '';
+if (preg_match('/Sec-WebSocket-Protocol:\s*([^\r\n]+)/i', $responseHeader, $spMatch)) {
+    $bmcProto = trim($spMatch[1]);
+}
+
+if (function_exists('ipmiProxyDebugEnabled') && ipmiProxyDebugEnabled()) {
+    error_log('ipmi_ws_relay: sending_101 sapi=' . PHP_SAPI
+        . ' bmc_proto=' . ($bmcProto !== '' ? $bmcProto : 'none')
+        . ' client_proto=' . ($clientProto !== '' ? $clientProto : 'none'));
+}
+
 header('HTTP/1.1 101 Switching Protocols');
 header('Upgrade: websocket');
 header('Connection: Upgrade');
 header('Sec-WebSocket-Accept: ' . $expectedAccept);
+if ($bmcProto !== '') {
+    header('Sec-WebSocket-Protocol: ' . $bmcProto);
+}
 
 if (function_exists('ob_end_flush')) {
     while (ob_get_level()) {
@@ -260,6 +297,12 @@ if (function_exists('ob_end_flush')) {
 }
 flush();
 
+if (function_exists('apache_setenv')) {
+    @apache_setenv('no-gzip', '1');
+}
+@ini_set('zlib.output_compression', '0');
+@ini_set('implicit_flush', '1');
+
 set_time_limit(0);
 stream_set_blocking($remote, false);
 
@@ -267,6 +310,9 @@ $clientIn  = fopen('php://input', 'rb');
 $clientOut = fopen('php://output', 'wb');
 
 if (!$clientIn || !$clientOut) {
+    if (function_exists('ipmiProxyDebugEnabled') && ipmiProxyDebugEnabled()) {
+        error_log('ipmi_ws_relay: failed_to_open_client_streams clientIn=' . ($clientIn ? '1' : '0') . ' clientOut=' . ($clientOut ? '1' : '0'));
+    }
     fclose($remote);
     exit;
 }
@@ -274,6 +320,14 @@ if (!$clientIn || !$clientOut) {
 stream_set_blocking($clientIn, false);
 
 $deadline = time() + 7200;
+$bytesFromBmc = 0;
+$bytesFromClient = 0;
+$relayStartTs = microtime(true);
+
+if (function_exists('ipmiProxyDebugEnabled') && ipmiProxyDebugEnabled()) {
+    error_log('ipmi_ws_relay: relay_loop_started sapi=' . PHP_SAPI);
+}
+
 while (!feof($remote) && time() < $deadline) {
     $read = [$remote, $clientIn];
     $write = null;
@@ -297,12 +351,22 @@ while (!feof($remote) && time() < $deadline) {
         }
 
         if ($stream === $remote) {
+            $bytesFromBmc += strlen($data);
             @fwrite($clientOut, $data);
             @fflush($clientOut);
         } else {
+            $bytesFromClient += strlen($data);
             @fwrite($remote, $data);
         }
     }
+}
+
+$elapsed = round(microtime(true) - $relayStartTs, 2);
+if (function_exists('ipmiProxyDebugEnabled') && ipmiProxyDebugEnabled()) {
+    error_log('ipmi_ws_relay: relay_ended elapsed=' . $elapsed . 's'
+        . ' bytes_from_bmc=' . $bytesFromBmc
+        . ' bytes_from_client=' . $bytesFromClient
+        . ' sapi=' . PHP_SAPI);
 }
 
 @fclose($clientIn);

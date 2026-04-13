@@ -10,4 +10,8 @@ RewriteRule ^favicon\.ico$ favicon.php [L,QSA]
 RewriteRule ^ipmi_proxy\.php/(.+)$ /ipmi_proxy.php/$1 [END,QSA]
 
 # WebSocket relay: /ipmi_ws_relay.php?token=...&target=...
+# Allow WebSocket Upgrade header to pass through to PHP.
+RewriteCond %{HTTP:Upgrade} =websocket [NC]
+RewriteRule ^ipmi_ws_relay\.php$ /ipmi_ws_relay.php [END,QSA]
+RewriteCond %{HTTP:Upgrade} !=websocket [NC]
 RewriteRule ^ipmi_ws_relay\.php$ /ipmi_ws_relay.php [END,QSA]
