@@ -1619,10 +1619,10 @@ function ipmiKvmBugLogDeriveFinalTransportHealthy(array $agg, array $merged, str
     if (!empty($agg['transport_unstable'])) {
         return false;
     }
+    // Verdicts that deny transport health outright. Do not include `console_transport_healthy` (stall path when sustained flow OK).
     $badVerdict = in_array($verdict, [
         'transport_unhealthy_console_not_confirmed',
         'transport_unstable_console_not_confirmed',
-        'console_transport_healthy',
         'relay_browser_handshake_failed',
         'relay_upstream_tls_failed',
         'relay_upstream_ws_failed',
@@ -2529,4 +2529,361 @@ function ipmiKvmTransportAggregateMergeBrowserEvent(array $agg, string $event, a
     unset($detail);
 
     return $agg;
+}
+
+// ---------------------------------------------------------------------------
+// Read-only bug history (bugs/bugsN.txt): list, load, compare, regression patterns.
+// Never writes or rewrites files. Primary "current" snapshot on disk = highest N.
+// ---------------------------------------------------------------------------
+
+/** Max bytes to load per history file (avoid OOM). */
+function ipmiKvmBugHistoryMaxFileBytes(): int
+{
+    return 8 * 1024 * 1024;
+}
+
+/**
+ * Resolve user input to a safe bugs/bugsN.txt relative path under project root.
+ * Accepts: "4", "bugs4.txt", "bugs/bugs4.txt", "bugs/bugs4.TXT".
+ */
+function ipmiKvmBugHistoryResolveRelativePath(string $input): ?string
+{
+    $input = trim($input);
+    if ($input === '') {
+        return null;
+    }
+    $norm = str_replace('\\', '/', $input);
+    if (preg_match('/^bugs\/bugs(\d+)\.txt$/i', $norm, $m)) {
+        return 'bugs/bugs' . (int) $m[1] . '.txt';
+    }
+    if (preg_match('/^bugs(\d+)\.txt$/i', $input, $m)) {
+        return 'bugs/bugs' . (int) $m[1] . '.txt';
+    }
+    if (preg_match('/^(\d+)$/', $input, $m)) {
+        return ipmiKvmBugFileRelForIndex((int) $m[1]);
+    }
+
+    return null;
+}
+
+/**
+ * Validate that a project-relative path resolves to a regular file inside bugs/ only.
+ */
+function ipmiKvmBugHistoryIsSafeBugFileRel(string $rel): bool
+{
+    $rel = trim(str_replace('\\', '/', $rel));
+    if ($rel === '' || str_contains($rel, '..') || str_starts_with($rel, '/')) {
+        return false;
+    }
+    if (!preg_match('#^bugs/bugs\d+\.txt$#i', $rel)) {
+        return false;
+    }
+    $folder = realpath(ipmiKvmBugFolderPath());
+    if ($folder === false) {
+        return false;
+    }
+    $abs = realpath(ipmiKvmBugProjectRoot() . DIRECTORY_SEPARATOR . str_replace('/', DIRECTORY_SEPARATOR, $rel));
+    if ($abs === false || !is_file($abs)) {
+        return false;
+    }
+
+    return str_starts_with(strtolower($abs), strtolower($folder . DIRECTORY_SEPARATOR));
+}
+
+/**
+ * Read-only load of a single bug run file (UTF-8 bytes as stored).
+ */
+function ipmiKvmBugHistoryLoad(string $relOrIndex): ?string
+{
+    $rel = ipmiKvmBugHistoryResolveRelativePath($relOrIndex);
+    if ($rel === null || !ipmiKvmBugHistoryIsSafeBugFileRel($rel)) {
+        return null;
+    }
+    $abs = ipmiKvmBugProjectRoot() . DIRECTORY_SEPARATOR . str_replace('/', DIRECTORY_SEPARATOR, $rel);
+    $size = @filesize($abs);
+    if ($size === false || $size > ipmiKvmBugHistoryMaxFileBytes()) {
+        return null;
+    }
+    $c = @file_get_contents($abs);
+    if ($c === false) {
+        return null;
+    }
+
+    return $c;
+}
+
+/** Highest existing bugsN index, or null if none. */
+function ipmiKvmBugHistoryPrimaryReferenceIndex(): ?int
+{
+    $list = ipmiKvmBugFileListExisting();
+    if ($list === []) {
+        return null;
+    }
+
+    return (int) max($list);
+}
+
+/** Relative path bugs/bugs{N}.txt for the latest on-disk run (primary reference). */
+function ipmiKvmBugHistoryPrimaryReferenceRel(): ?string
+{
+    $idx = ipmiKvmBugHistoryPrimaryReferenceIndex();
+    if ($idx === null) {
+        return null;
+    }
+
+    return ipmiKvmBugFileRelForIndex($idx);
+}
+
+/**
+ * Metadata for each existing bugsN.txt (chronological by index).
+ *
+ * @return list<array<string, mixed>>
+ */
+function ipmiKvmBugHistoryList(): array
+{
+    $out = [];
+    foreach (ipmiKvmBugFileListExisting() as $idx) {
+        $rel = ipmiKvmBugFileRelForIndex($idx);
+        $abs = ipmiKvmBugFilePathForIndex($idx);
+        $out[] = [
+            'index' => $idx,
+            'bug_file_rel' => $rel,
+            'abs_path' => $abs,
+            'size_bytes' => is_file($abs) ? (int) filesize($abs) : 0,
+            'mtime_utc' => is_file($abs) ? gmdate('c', (int) filemtime($abs)) . 'Z' : '',
+            'is_primary_reference_candidate' => false,
+        ];
+    }
+    $n = count($out);
+    if ($n > 0) {
+        $out[$n - 1]['is_primary_reference_candidate'] = true;
+    }
+
+    return $out;
+}
+
+/**
+ * Parse the last [FINAL] block in a run file into key => value (string values).
+ *
+ * @return array<string, string>
+ */
+function ipmiKvmBugHistoryParseFinalSnapshot(string $raw): array
+{
+    $out = [];
+    if ($raw === '') {
+        return $out;
+    }
+    $pos = strrpos($raw, '[FINAL]');
+    if ($pos === false) {
+        return $out;
+    }
+    $tail = substr($raw, $pos);
+    $block = '';
+    if (preg_match('/^\[FINAL\]\r?\n([\s\S]*?)(?:\r?\n={10,}\r?\nKVM RUN END\s*)$/m', $tail, $m)) {
+        $block = (string) $m[1];
+    } elseif (preg_match('/^\[FINAL\]\r?\n([\s\S]+)/', $tail, $m)) {
+        $block = (string) $m[1];
+    }
+    foreach (preg_split('/\r?\n/', $block) as $line) {
+        if (preg_match('/^([a-zA-Z0-9_]+):\s*(.*)$/', trim($line), $lm)) {
+            $out[$lm[1]] = $lm[2];
+        }
+    }
+    if ($out !== [] && isset($out['final_verdict']) && empty($out['verdict'])) {
+        $out['verdict'] = $out['final_verdict'];
+    }
+
+    return $out;
+}
+
+/**
+ * Classify failure modes for tooling / human triage (no writes).
+ *
+ * @param array<string, mixed> $agg From ipmiKvmBugLogComputeAggregateFromRaw
+ * @return array<string, mixed>
+ */
+function ipmiKvmBugHistoryClassifyFailureModes(array $agg, string $raw): array
+{
+    $shellDomain = !empty($agg['shell_abandon_signal'])
+        || (int) ($agg['shell_runtime_inject_count'] ?? 0) > 0
+        || (int) ($agg['shell_exit_stub_inject_count'] ?? 0) > 0;
+    $promoDomain = !empty($agg['application_path_signal']);
+    $relayDomain = (int) ($agg['relay_request_count'] ?? 0) > 0
+        || !empty($agg['upstream_connect_attempted'])
+        || (int) ($agg['relay_pump_starts'] ?? 0) > 0;
+    $browserWsStress = !empty($agg['browser_ws_attempted'])
+        && (
+            (int) ($agg['browser_ws_failed_connect_count'] ?? 0) > 0
+            || (int) ($agg['browser_ws_error_count'] ?? 0) > 0
+            || (int) ($agg['browser_ws_close_count'] ?? 0) > 2
+        );
+    $consoleDomain = (int) ($agg['browser_console_entry_count'] ?? 0) > 0
+        || str_contains($raw, '[BROWSER_CONSOLE]')
+        || (bool) preg_match('/\[BROWSER\][^\n]*browser_/', $raw);
+
+    return [
+        'shell_path_signal' => $shellDomain,
+        'application_path_signal' => $promoDomain,
+        'relay_transport_signal' => $relayDomain,
+        'browser_console_capture_signal' => $consoleDomain,
+        'browser_websocket_stress_signal' => $browserWsStress,
+        'sustained_frame_flow_observed' => !empty($agg['sustained_frame_flow_observed']),
+        'first_frame_observed' => !empty($agg['first_frame_observed']),
+    ];
+}
+
+/**
+ * Lightweight regression notes between consecutive indexed runs (same order as bug file list).
+ *
+ * @param list<array<string, mixed>> $runs Each must have 'index', 'final' (array)
+ * @return list<string>
+ */
+function ipmiKvmBugHistoryBuildRegressionNotes(array $runs): array
+{
+    $notes = [];
+    $n = count($runs);
+    for ($i = 1; $i < $n; $i++) {
+        $prev = $runs[$i - 1];
+        $cur = $runs[$i];
+        $prevIdx = (int) ($prev['index'] ?? 0);
+        $curIdx = (int) ($cur['index'] ?? 0);
+        $finP = is_array($prev['final'] ?? null) ? $prev['final'] : [];
+        $finC = is_array($cur['final'] ?? null) ? $cur['final'] : [];
+        $tp = strtolower(trim((string) ($finP['transport_healthy'] ?? '')));
+        $tc = strtolower(trim((string) ($finC['transport_healthy'] ?? '')));
+        if ($tp === 'yes' && $tc !== 'yes' && $tc !== '') {
+            $notes[] = "bugs{$curIdx}.txt transport_healthy no longer yes vs bugs{$prevIdx}.txt.";
+        }
+        $vp = strtolower(trim((string) ($finP['verdict'] ?? $finP['final_verdict'] ?? '')));
+        $vc = strtolower(trim((string) ($finC['verdict'] ?? $finC['final_verdict'] ?? '')));
+        if ($vp !== '' && $vc !== '' && $vp !== $vc) {
+            $notes[] = "verdict changed from bugs{$prevIdx} ({$vp}) to bugs{$curIdx} ({$vc}).";
+        }
+    }
+
+    return $notes;
+}
+
+/**
+ * Compare two raw bug file bodies (read-only).
+ *
+ * @return array<string, mixed>
+ */
+function ipmiKvmBugHistoryCompare(string $rawA, string $rawB): array
+{
+    $aggA = ipmiKvmBugLogComputeAggregateFromRaw($rawA);
+    $aggB = ipmiKvmBugLogComputeAggregateFromRaw($rawB);
+    $finA = ipmiKvmBugHistoryParseFinalSnapshot($rawA);
+    $finB = ipmiKvmBugHistoryParseFinalSnapshot($rawB);
+    $modesA = ipmiKvmBugHistoryClassifyFailureModes($aggA, $rawA);
+    $modesB = ipmiKvmBugHistoryClassifyFailureModes($aggB, $rawB);
+    $verdictA = strtolower(trim((string) ($finA['verdict'] ?? $finA['final_verdict'] ?? '')));
+    $verdictB = strtolower(trim((string) ($finB['verdict'] ?? $finB['final_verdict'] ?? '')));
+    $thA = strtolower(trim((string) ($finA['transport_healthy'] ?? '')));
+    $thB = strtolower(trim((string) ($finB['transport_healthy'] ?? '')));
+
+    return [
+        'a' => [
+            'aggregate' => $aggA,
+            'final' => $finA,
+            'modes' => $modesA,
+        ],
+        'b' => [
+            'aggregate' => $aggB,
+            'final' => $finB,
+            'modes' => $modesB,
+        ],
+        'delta' => [
+            'verdict_changed' => $verdictA !== $verdictB,
+            'transport_health_changed' => $thA !== $thB,
+            'relay_requests_delta' => (int) ($aggB['relay_request_count'] ?? 0) - (int) ($aggA['relay_request_count'] ?? 0),
+            'browser_ws_failed_connect_delta' => (int) ($aggB['browser_ws_failed_connect_count'] ?? 0) - (int) ($aggA['browser_ws_failed_connect_count'] ?? 0),
+            'browser_console_error_delta' => (int) ($aggB['browser_console_error_count'] ?? 0) - (int) ($aggA['browser_console_error_count'] ?? 0),
+            'modes_diff' => array_diff_assoc($modesA, $modesB),
+        ],
+    ];
+}
+
+/**
+ * Convenience: compare two on-disk files by index.
+ *
+ * @return array<string, mixed>|null
+ */
+function ipmiKvmBugHistoryCompareByIndex(int $indexA, int $indexB): ?array
+{
+    $ra = ipmiKvmBugHistoryLoad(ipmiKvmBugFileRelForIndex($indexA));
+    $rb = ipmiKvmBugHistoryLoad(ipmiKvmBugFileRelForIndex($indexB));
+    if ($ra === null || $rb === null) {
+        return null;
+    }
+
+    return ipmiKvmBugHistoryCompare($ra, $rb);
+}
+
+/**
+ * Full read-only summary across all bugsN.txt: aggregates, finals, regression hints.
+ *
+ * @return array<string, mixed>
+ */
+function ipmiKvmBugHistorySummarizeRegressionPatterns(): array
+{
+    $files = ipmiKvmBugHistoryList();
+    $runs = [];
+    $byReason = [];
+    $byVerdict = [];
+    foreach ($files as $f) {
+        $rel = (string) ($f['bug_file_rel'] ?? '');
+        $raw = ipmiKvmBugHistoryLoad($rel);
+        if ($raw === null) {
+            continue;
+        }
+        $agg = ipmiKvmBugLogComputeAggregateFromRaw($raw);
+        $fin = ipmiKvmBugHistoryParseFinalSnapshot($raw);
+        $modes = ipmiKvmBugHistoryClassifyFailureModes($agg, $raw);
+        $idx = (int) ($f['index'] ?? 0);
+        $runs[] = [
+            'index' => $idx,
+            'bug_file_rel' => $rel,
+            'final' => $fin,
+            'modes' => $modes,
+            'aggregate_slice' => [
+                'relay_request_count' => (int) ($agg['relay_request_count'] ?? 0),
+                'browser_ws_failed_connect_count' => (int) ($agg['browser_ws_failed_connect_count'] ?? 0),
+                'browser_console_error_count' => (int) ($agg['browser_console_error_count'] ?? 0),
+                'sustained_frame_flow_observed' => !empty($agg['sustained_frame_flow_observed']),
+            ],
+        ];
+        $reason = strtolower(trim((string) ($fin['final_failure_reason'] ?? '')));
+        if ($reason !== '' && $reason !== 'none') {
+            $byReason[$reason] = ($byReason[$reason] ?? 0) + 1;
+        }
+        $v = strtolower(trim((string) ($fin['verdict'] ?? $fin['final_verdict'] ?? '')));
+        if ($v !== '') {
+            $byVerdict[$v] = ($byVerdict[$v] ?? 0) + 1;
+        }
+    }
+    $primary = ipmiKvmBugHistoryPrimaryReferenceIndex();
+    $primaryRel = ipmiKvmBugHistoryPrimaryReferenceRel();
+    $explicit4Exists = is_file(ipmiKvmBugFilePathForIndex(4));
+    $designatedIdx = 4;
+    $designatedRel = ipmiKvmBugFileRelForIndex($designatedIdx);
+    $designatedRaw = $explicit4Exists ? ipmiKvmBugHistoryLoad($designatedRel) : null;
+
+    return [
+        'run_count' => count($runs),
+        'primary_reference_index' => $primary,
+        'primary_reference_rel' => $primaryRel,
+        'primary_reference_explanation' => 'On disk, the latest preserved run is the highest bugsN.txt index (same as a deployment where bugs4.txt is current when N=4 is max).',
+        'designated_human_reference_index' => $designatedIdx,
+        'designated_human_reference_rel' => $designatedRel,
+        'designated_human_reference_note' => 'Client regression review treats bugs/bugs4.txt as the main written reference when present; compare with primary_reference_* when newer runs exist (bugs5+).',
+        'designated_human_reference_loaded' => $designatedRaw !== null,
+        'designated_human_reference_final_snapshot' => $designatedRaw !== null ? ipmiKvmBugHistoryParseFinalSnapshot($designatedRaw) : [],
+        'explicit_bugs4_txt_present' => $explicit4Exists,
+        'bugs4_matches_primary_reference' => $primary === 4 && $explicit4Exists,
+        'runs_chronological' => $runs,
+        'final_failure_reason_histogram' => $byReason,
+        'final_verdict_histogram' => $byVerdict,
+        'regression_notes' => ipmiKvmBugHistoryBuildRegressionNotes($runs),
+    ];
 }
