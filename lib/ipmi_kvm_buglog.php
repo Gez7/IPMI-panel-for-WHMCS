@@ -329,6 +329,8 @@ function ipmiKvmBugLogRelayEventFinalRefreshPriority(string $event): int
         str_contains($event, 'ipmi_ws_relay_upstream_tls_failed') => 3,
         str_contains($event, 'ipmi_ws_relay_upstream_tcp_failed') => 3,
         $event === 'ipmi_ws_relay_sustained_frame_flow_observed' => 2,
+        // Every relay HTTP hit should be able to move [FINAL] forward (browser may have logged errors first).
+        $event === 'ipmi_ws_relay_request_received' => 2,
         $event === 'ipmi_ws_relay_first_frame_observed' => 1,
         str_contains($event, 'ipmi_ws_relay_frame_pump_error') => 2,
         // Success-path lines that often land after an early [FINAL]: refresh so TRANSPORT does not trail a stale block.
@@ -487,6 +489,8 @@ function ipmiKvmBrowserLogNoiseDedupeInfo(string $section, string $event, array 
         'transport_failed'                                 => ['sec' => ['TRANSPORT'], 'mat' => ['verdict']],
         'transport_healthy'                                => ['sec' => ['TRANSPORT'], 'mat' => []],
         'browser_ws_handshake_failed_event'                => ['sec' => ['TRANSPORT'], 'mat' => []],
+        'browser_ws_error'                                 => ['sec' => ['BROWSER'], 'mat' => ['relay_url_norm']],
+        'browser_ws_failed_connect'                        => ['sec' => ['BROWSER'], 'mat' => ['relay_url_norm', 'phase']],
     ];
     if (!isset($rules[$ev])) {
         return ['noise' => false, 'key' => ''];
@@ -611,7 +615,6 @@ function ipmiKvmBugLogMarkRunClosed(mysqli $mysqli, string $token): void
  */
 function ipmiKvmBugLogNormalizeBrowserEvent(array $row): string
 {
-    $section = strtoupper(trim((string) ($row['section'] ?? 'BROWSER')));
     $event = trim((string) ($row['event'] ?? ''));
     if ($event === '') {
         $event = 'unknown';
@@ -712,6 +715,16 @@ function ipmiKvmBugLogIngestBrowserEvent(mysqli $mysqli, array $payload): array
         ]);
     }
 
+    $browserFinalPri = [
+        'browser_ws_failed_connect' => 'ipmi_ws_relay_http_error_exit',
+        'browser_ws_error'        => 'ipmi_ws_relay_frame_pump_error',
+        'browser_ws_close'        => 'ipmi_ws_relay_first_frame_observed',
+        'browser_ws_attempted'    => 'ipmi_ws_relay_request_received',
+    ];
+    if ($mysqli instanceof mysqli && isset($browserFinalPri[$ev])) {
+        ipmiKvmBugLogMaybeRefreshFinalAfterRelayEvent($mysqli, $token, $browserFinalPri[$ev]);
+    }
+
     return ['ok' => true];
 }
 
@@ -746,10 +759,16 @@ function ipmiKvmBugLogComputeAggregateFromRaw(string $raw): array
         'launch_attempt_signal'           => false,
         'live_display_heuristic_signal'   => false,
         'browser_transport_verdict_last'  => '',
+        'relay_request_count'             => 0,
+        'browser_ws_failed_connect_count' => 0,
+        'browser_ws_socket_error_events'  => 0,
     ];
     if ($raw === '') {
         return $agg;
     }
+    $agg['relay_request_count'] = substr_count($raw, 'ipmi_ws_relay_request_received');
+    $agg['browser_ws_failed_connect_count'] = (int) preg_match_all('/event:\s*browser_ws_failed_connect\b/', $raw);
+    $agg['browser_ws_socket_error_events'] = (int) preg_match_all('/event:\s*browser_ws_error\b/', $raw);
     $agg['browser_ws_handshake_ok'] = str_contains($raw, 'ipmi_ws_relay_browser_handshake_succeeded')
         || (bool) preg_match('/\[BROWSER\][^\n]*browser_ws_handshake_succeeded/', $raw)
         || (bool) preg_match('/\[TRANSPORT\][^\n]*browser_ws_handshake_succeeded/', $raw)
@@ -792,11 +811,14 @@ function ipmiKvmBugLogComputeAggregateFromRaw(string $raw): array
         || str_contains($raw, 'ipmi_ws_relay_browser_handshake_failed')
         || str_contains($raw, 'ipmi_ws_relay_browser_handshake_succeeded')
         || str_contains($raw, 'ipmi_ws_relay_browser_handshake_accepting')
+        || (bool) preg_match('/event:\s*browser_ws_attempted\b/', $raw)
         || (bool) preg_match('/event:\s*browser_ws_relay_connect_attempted\b/', $raw)
         || (bool) preg_match('/event:\s*browser_ws_construct_failed\b/', $raw)
         || (bool) preg_match('/event:\s*browser_ws_handshake_succeeded\b/', $raw)
         || (bool) preg_match('/event:\s*browser_ws_handshake_failed_event\b/', $raw)
         || (bool) preg_match('/event:\s*browser_ws_closed\b/', $raw)
+        || (bool) preg_match('/event:\s*browser_ws_error\b/', $raw)
+        || (bool) preg_match('/event:\s*browser_ws_failed_connect\b/', $raw)
         || (bool) preg_match('/event:\s*browser_ws_first_application_frame\b/', $raw)
         // Ingested browser-side transport verdict lines (post-WebSocket; collapse-only duplicates but first line proves WS path ran).
         || (bool) preg_match('/event:\s*transport_healthy\b/', $raw)
@@ -804,13 +826,16 @@ function ipmiKvmBugLogComputeAggregateFromRaw(string $raw): array
     $agg['browser_ws_handshake_fail_count'] = substr_count($raw, 'ipmi_ws_relay_browser_handshake_failed');
     $agg['browser_ws_error_count'] = substr_count($raw, 'browser_ws_construct_failed')
         + substr_count($raw, 'browser_ws_handshake_failed_event')
-        + (int) $agg['browser_ws_handshake_fail_count'];
-    $agg['browser_ws_close_count'] = substr_count($raw, 'browser_ws_closed');
+        + (int) $agg['browser_ws_handshake_fail_count']
+        + (int) ($agg['browser_ws_socket_error_events'] ?? 0);
+    $agg['browser_ws_close_count'] = (int) preg_match_all('/event:\s*browser_ws_close\b/', $raw)
+        + (int) preg_match_all('/event:\s*browser_ws_closed\b/', $raw);
     $agg['upstream_connect_attempted'] = str_contains($raw, 'ipmi_ws_relay_upstream_connect_started');
     $agg['relay_http_error_exit_count'] = substr_count($raw, 'ipmi_ws_relay_http_error_exit');
     $agg['transport_attempted'] = !empty($agg['browser_ws_attempted'])
         || !empty($agg['upstream_connect_attempted'])
-        || ((int) ($agg['relay_pump_starts'] ?? 0) > 0);
+        || ((int) ($agg['relay_pump_starts'] ?? 0) > 0)
+        || ((int) ($agg['relay_request_count'] ?? 0) > 0);
 
     return $agg;
 }
@@ -864,7 +889,8 @@ function ipmiKvmTransportAggregateStore(mysqli $mysqli, string $token, array $ag
     $slice = array_intersect_key($agg, array_flip([
         'transport_attempted', 'transport_unstable', 'transport_failed',
         'browser_ws_attempted', 'browser_ws_handshake_ok', 'browser_ws_handshake_fail_count',
-        'browser_ws_error_count', 'browser_ws_close_count',
+        'browser_ws_error_count', 'browser_ws_close_count', 'browser_ws_failed_connect_count',
+        'relay_request_count', 'browser_ws_socket_error_events',
         'upstream_connect_attempted', 'upstream_tls_ok', 'upstream_ws_ok',
         'frame_pump_started', 'first_frame_observed', 'sustained_frame_flow_observed',
         'idle_timeout_observed', 'upstream_ws_fail_count', 'upstream_tls_fail_count',
@@ -947,6 +973,13 @@ function ipmiKvmTransportFinalFailureReason(array $agg, array $merged, bool $tra
 
     $bOk = ($merged['browser_ws_handshake_ok'] ?? '') === 'yes' || !empty($agg['browser_ws_handshake_ok']);
     $bErr = (int) ($agg['browser_ws_error_count'] ?? 0);
+    $relays = (int) ($agg['relay_request_count'] ?? 0);
+    $bFailConn = (int) ($agg['browser_ws_failed_connect_count'] ?? 0);
+    $sockErrOnly = (int) ($agg['browser_ws_socket_error_events'] ?? 0);
+
+    if (!$bOk && $relays === 0 && ($bFailConn >= 1 || $sockErrOnly >= 1)) {
+        return 'browser_ws_failed_before_relay_confirmed';
+    }
     if (!$bOk && $bErr >= 1) {
         return 'browser_ws_handshake_failed';
     }
@@ -963,6 +996,10 @@ function ipmiKvmTransportFinalFailureReason(array $agg, array $merged, bool $tra
     $pumps = (int) ($agg['relay_pump_starts'] ?? 0);
 
     $partialUpstream = $bOk && ($tlsOk || $wsOk || $first);
+
+    if ($partialUpstream && !$sust && ($sockErrOnly >= 2 || $bFailConn >= 2 || ($bFailConn >= 1 && $sockErrOnly >= 1))) {
+        return 'browser_ws_errors_after_partial_relay_success';
+    }
 
     if (!$tlsOk && $upTlsFail >= 1 && !$wsOk && $upWsFail === 0 && !$first) {
         return 'upstream_tls_failed';
@@ -1459,6 +1496,8 @@ function ipmiKvmBugLogPatchFinalBlock(array $payload, ?mysqli $mysqli = null): v
         . $line('browser_ws_handshake_fail_count', (string) ((int) ($agg['browser_ws_handshake_fail_count'] ?? 0)))
         . $line('browser_ws_error_count', (string) ((int) ($agg['browser_ws_error_count'] ?? 0)))
         . $line('browser_ws_close_count', (string) ((int) ($agg['browser_ws_close_count'] ?? 0)))
+        . $line('browser_ws_failed_connect_count', (string) ((int) ($agg['browser_ws_failed_connect_count'] ?? 0)))
+        . $line('relay_request_count', (string) ((int) ($agg['relay_request_count'] ?? 0)))
         . $line('browser_noise_collapsed_summary', $noiseSummary)
         . $line('upstream_connect_attempted', (string) ($merged['upstream_connect_attempted'] ?? 'unknown'))
         . $line('upstream_tls_ok', (string) ($merged['upstream_tls_ok'] ?? 'unknown'))
@@ -1491,11 +1530,15 @@ function ipmiKvmBugLogPatchFinalBlock(array $payload, ?mysqli $mysqli = null): v
     ) {
         ipmiProxyDebugLog('kvm_buglog_final_transport_matrix', [
             'token_suffix'                  => strlen($tok) >= 8 ? substr($tok, -8) : '',
+            'verdict'                       => $verdict !== '' ? $verdict : 'pending',
+            'verdict_source'                => (string) ($resolved['source'] ?? 'browser'),
             'transport_attempted'           => (string) ($merged['transport_attempted'] ?? ''),
             'browser_ws_attempted'          => (string) ($merged['browser_ws_attempted'] ?? ''),
             'browser_ws_handshake_ok'       => (string) ($merged['browser_ws_handshake_ok'] ?? ''),
             'browser_ws_error_count'        => (string) ((int) ($agg['browser_ws_error_count'] ?? 0)),
             'browser_ws_close_count'        => (string) ((int) ($agg['browser_ws_close_count'] ?? 0)),
+            'browser_ws_failed_connect_count' => (string) ((int) ($agg['browser_ws_failed_connect_count'] ?? 0)),
+            'relay_request_count'           => (string) ((int) ($agg['relay_request_count'] ?? 0)),
             'upstream_connect_attempted'    => (string) ($merged['upstream_connect_attempted'] ?? ''),
             'upstream_tls_ok'               => (string) ($merged['upstream_tls_ok'] ?? ''),
             'upstream_ws_ok'                => (string) ($merged['upstream_ws_ok'] ?? ''),
@@ -1767,7 +1810,7 @@ function ipmiKvmBrowserLogAggregateState(string $raw): array
         'application_path_signal', 'launch_attempt_signal', 'session_ready_signal',
         'live_display_heuristic_signal', 'browser_transport_verdict_last',
         'browser_ws_attempted', 'browser_ws_handshake_ok', 'browser_ws_handshake_fail_count',
-        'browser_ws_error_count', 'browser_ws_close_count',
+        'browser_ws_error_count', 'browser_ws_close_count', 'browser_ws_failed_connect_count', 'relay_request_count',
         'transport_attempted', 'upstream_connect_attempted', 'upstream_tls_ok', 'upstream_ws_ok',
         'frame_pump_started', 'first_frame_observed', 'sustained_frame_flow_observed',
         'idle_timeout_observed', 'transport_unstable', 'transport_failed',
@@ -1809,4 +1852,74 @@ function ipmiProxyIloFinalizeStrongConfirmation(string $verdict): void
 function ipmiProxyIloStopShellPollingAfterPromotion(mysqli $mysqli, string $token): void
 {
     ipmiKvmShellAbandonPersist($mysqli, $token, 'SHELL_POLL_STOP_AFTER_PROMOTION');
+}
+
+/**
+ * Server-side attempt id for non-browser callers (browser uses ipmiKvmTransportAttemptIdCreate in injected JS).
+ */
+function ipmiKvmTransportAttemptIdCreate(): string
+{
+    try {
+        return 'srv_' . bin2hex(random_bytes(4));
+    } catch (Throwable $e) {
+        return 'srv_t' . (string) time();
+    }
+}
+
+function ipmiKvmTransportAttemptIdPropagate(string $attemptId): string
+{
+    $s = trim(preg_replace('/[^a-zA-Z0-9_.-]/', '', $attemptId));
+
+    return $s !== '' ? substr($s, 0, 64) : ipmiKvmTransportAttemptIdCreate();
+}
+
+/**
+ * Optional hook for future session-backed correlation; full-run truth remains bugs.txt scan.
+ *
+ * @param array<string, mixed> $row
+ */
+function ipmiKvmBrowserRelayCorrelationStore(mysqli $mysqli, string $token, array $row): void
+{
+    unset($mysqli, $token, $row);
+}
+
+/**
+ * @param array<string, mixed> $a
+ * @param array<string, mixed> $b
+ * @return array<string, mixed>
+ */
+function ipmiKvmBrowserRelayCorrelationMerge(array $a, array $b): array
+{
+    return array_merge($a, $b);
+}
+
+/**
+ * Placeholder: true until kvm_buglog_last_transport_ts is maintained server-side per event.
+ */
+function ipmiKvmBugLogSettleWindowPassed(mysqli $mysqli, string $token, int $quietSeconds = 12): bool
+{
+    unset($mysqli, $token, $quietSeconds);
+
+    return true;
+}
+
+/**
+ * Streaming merge for browser file lines (authoritative aggregate still from ipmiKvmBugLogComputeAggregateFromRaw).
+ *
+ * @param array<string, mixed> $agg
+ * @param array<string, mixed> $detail
+ * @return array<string, mixed>
+ */
+function ipmiKvmTransportAggregateMergeBrowserEvent(array $agg, string $event, array $detail = []): array
+{
+    $e = strtolower(trim($event));
+    if (str_contains($e, 'browser_ws_attempted')
+        || str_contains($e, 'browser_ws_failed_connect')
+        || str_contains($e, 'browser_ws_error')
+        || str_contains($e, 'browser_ws_relay_connect_attempted')) {
+        $agg['browser_ws_attempted'] = true;
+    }
+    unset($detail);
+
+    return $agg;
 }

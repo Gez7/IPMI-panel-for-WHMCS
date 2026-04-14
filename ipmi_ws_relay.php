@@ -203,6 +203,11 @@ if (!preg_match('/^[a-f0-9]{64}$/', $token)) {
 
 $GLOBALS['__ipmi_ws_relay_buglog_token'] = $token;
 
+$browserWsAttemptId = trim((string) ($_GET['browser_attempt'] ?? ''));
+if ($browserWsAttemptId !== '') {
+    $browserWsAttemptId = substr(preg_replace('/[^a-zA-Z0-9_.-]/', '', $browserWsAttemptId), 0, 64);
+}
+
 $session = ipmiWebLoadSession($mysqli, $token);
 if (!$session) {
     ipmiWsRelayErrorResponse(403, 'session_load', 'Session expired or invalid');
@@ -282,6 +287,7 @@ ipmiWsRelayDebugEvent('ipmi_ws_relay_request_received', [
     'is_ws_upgrade'  => $isWsUpgrade,
     'sapi'           => PHP_SAPI,
     'target_present' => (isset($_GET['target']) && $_GET['target'] !== ''),
+    'browser_attempt'=> $browserWsAttemptId !== '' ? $browserWsAttemptId : 'none',
 ]);
 
 if (!$isWsUpgrade) {
