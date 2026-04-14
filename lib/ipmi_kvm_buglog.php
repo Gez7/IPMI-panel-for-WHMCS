@@ -718,6 +718,8 @@ function ipmiKvmBugLogFormatBrowserSummarySection(array $agg): string
     $lines[] = $pfx . 'event: browser_unhandled_rejection | count: ' . (string) ((int) ($agg['browser_unhandled_rejection_count'] ?? 0));
     $lines[] = $pfx . 'event: browser_fetch_http_error | count: ' . (string) ((int) ($agg['browser_fetch_http_error_count'] ?? 0));
     $lines[] = $pfx . 'event: browser_fetch_502 | count: ' . (string) ((int) ($agg['browser_fetch_502_count'] ?? 0));
+    $lines[] = $pfx . 'event: browser_fetch_403 | count: ' . (string) ((int) ($agg['browser_fetch_403_count'] ?? 0));
+    $lines[] = $pfx . 'event: browser_shell_watchdog_forbidden | count: ' . (string) ((int) ($agg['browser_shell_watchdog_forbidden_count'] ?? 0));
     $lines[] = $pfx . 'event: browser_transport_verdict_tick | latest: ' . (trim((string) ($agg['browser_transport_verdict_last'] ?? '')) !== ''
         ? substr(trim((string) $agg['browser_transport_verdict_last']), 0, 80)
         : 'unknown');
@@ -1034,6 +1036,30 @@ function ipmiKvmBugLogIngestBrowserEvent(mysqli $mysqli, array $payload): array
     if ($ev === 'shell_launch_no_effect' || $ev === 'ilo_starthtml5irc_no_effect') {
         ipmiKvmRecordShellAbandonReason($mysqli, $token, 'SHELL_LAUNCH_NO_EFFECT', '');
     }
+    if ($ev === 'browser_shell_watchdog_forbidden') {
+        $url = strtolower((string) ($detail['url'] ?? ''));
+        $kind = strtolower((string) ($detail['kind'] ?? ''));
+        $reason = 'BROWSER_SHELL_WATCHDOG_403';
+        if ($kind === 'both') {
+            $reason = 'SHELL_SSE_AND_SESSION_INFO_403';
+        } elseif (str_contains($url, 'session_info') || $kind === 'session_info') {
+            $reason = 'SHELL_SESSION_INFO_403';
+        } elseif (str_contains($url, 'sse') || $kind === 'sse_ui') {
+            $reason = 'SHELL_SSE_403';
+        }
+        ipmiKvmShellAbandonPersist($mysqli, $token, $reason, substr((string) ($detail['url'] ?? ''), 0, 240));
+        ipmiKvmRunStateAdvance($mysqli, $token, 'shell_path_abandoned', [
+            'path_state'              => 'shell_path_abandoned',
+            'shell_bootstrap_forbidden' => 1,
+            'reason'                  => $reason,
+        ]);
+        ipmiKvmBugLogAppendSection(
+            'SERVER',
+            'event: shell_bootstrap_forbidden_ingested | code: ' . $reason,
+            $mysqli,
+            $token
+        );
+    }
     if ($ev === 'application_path_loaded') {
         ipmiKvmRunStateStore($mysqli, $token, [
             'path_state' => 'application_path_active',
@@ -1043,9 +1069,10 @@ function ipmiKvmBugLogIngestBrowserEvent(mysqli $mysqli, array $payload): array
 
     $browserFinalPri = [
         'browser_ws_failed_connect' => 'ipmi_ws_relay_http_error_exit',
-        'browser_ws_error'        => 'ipmi_ws_relay_frame_pump_error',
-        'browser_ws_close'        => 'ipmi_ws_relay_first_frame_observed',
-        'browser_ws_attempted'    => 'ipmi_ws_relay_request_received',
+        'browser_ws_error'          => 'ipmi_ws_relay_frame_pump_error',
+        'browser_ws_close'          => 'ipmi_ws_relay_first_frame_observed',
+        'browser_ws_attempted'      => 'ipmi_ws_relay_request_received',
+        'browser_shell_watchdog_forbidden' => 'ipmi_ws_relay_request_received',
     ];
     if ($mysqli instanceof mysqli && isset($browserFinalPri[$ev])) {
         ipmiKvmBugLogMaybeRefreshFinalAfterRelayEvent($mysqli, $token, $browserFinalPri[$ev]);
@@ -1122,6 +1149,8 @@ function ipmiKvmBugLogComputeAggregateFromRaw(string $raw): array
     $agg['shell_abandon_signal'] = str_contains($raw, 'shell_path_abandoned_for_application')
         || str_contains($raw, 'SHELL_SSE_403')
         || str_contains($raw, 'SHELL_SESSION_INFO_403')
+        || str_contains($raw, 'SHELL_SSE_AND_SESSION_INFO_403')
+        || str_contains($raw, 'browser_shell_watchdog_forbidden')
         || str_contains($raw, 'code: SHELL_LAUNCH_NO_EFFECT');
     $agg['shell_runtime_inject_count'] = (int) preg_match_all('/ilo_main_runtime_injected[^\n]*patch_mode:\s*shell_runtime\b/', $raw);
     $agg['shell_exit_stub_inject_count'] = (int) preg_match_all('/ilo_main_runtime_injected[^\n]*patch_mode:\s*shell_exit_stub\b/', $raw);
@@ -1195,6 +1224,8 @@ function ipmiKvmBugLogAugmentAggregateFromTranscript(string $raw, array $agg): a
     $agg['browser_unhandled_rejection_count'] = 0;
     $agg['browser_fetch_http_error_count'] = 0;
     $agg['browser_fetch_502_count'] = 0;
+    $agg['browser_fetch_403_count'] = 0;
+    $agg['browser_shell_watchdog_forbidden_count'] = 0;
     $agg['browser_transport_verdict_tick_count'] = (int) preg_match_all('/event:\s*browser_transport_verdict_tick\b/', $raw);
     $agg['browser_stalled_max_ticks_count'] = 0;
     $agg['browser_console_socket_error_lines'] = 0;
@@ -1240,6 +1271,9 @@ function ipmiKvmBugLogAugmentAggregateFromTranscript(string $raw, array $agg): a
                     if ($fm[1] === '502') {
                         $agg['browser_fetch_502_count']++;
                     }
+                    if ($fm[1] === '403') {
+                        $agg['browser_fetch_403_count']++;
+                    }
                 }
             }
             $low = strtolower($line);
@@ -1259,6 +1293,11 @@ function ipmiKvmBugLogAugmentAggregateFromTranscript(string $raw, array $agg): a
             }
         }
     }
+    $agg['browser_shell_watchdog_forbidden_count'] = (int) preg_match_all('/event:\s*browser_shell_watchdog_forbidden\b/', $raw);
+    $agg['browser_fetch_403_count'] = max(
+        (int) ($agg['browser_fetch_403_count'] ?? 0),
+        (int) preg_match_all('/event:\s*browser_fetch_403\b/', $raw)
+    );
 
     $attemptIds = [];
     if (preg_match_all('/browser_attempt=([^\s&]+)/', $raw, $am)) {
@@ -2048,6 +2087,8 @@ function ipmiKvmBugLogPatchFinalBlock(array $payload, ?mysqli $mysqli = null): v
         . $line('browser_dom_exception_count', (string) ((int) ($agg['browser_dom_exception_count'] ?? 0)))
         . $line('browser_null_children_access_count', (string) ((int) ($agg['browser_null_children_access_count'] ?? 0)))
         . $line('browser_fetch_502_count', (string) ((int) ($agg['browser_fetch_502_count'] ?? 0)))
+        . $line('browser_fetch_403_count', (string) ((int) ($agg['browser_fetch_403_count'] ?? 0)))
+        . $line('browser_shell_watchdog_forbidden_count', (string) ((int) ($agg['browser_shell_watchdog_forbidden_count'] ?? 0)))
         . $line('browser_unhandled_exception_count', (string) ((int) ($agg['browser_unhandled_exception_count'] ?? 0)))
         . $line('browser_unhandled_rejection_count', (string) ((int) ($agg['browser_unhandled_rejection_count'] ?? 0)))
         . $line('browser_transport_verdict_tick_count', (string) ((int) ($agg['browser_transport_verdict_tick_count'] ?? 0)))
@@ -2721,8 +2762,14 @@ function ipmiKvmBugHistoryClassifyFailureModes(array $agg, string $raw): array
         || str_contains($raw, '[BROWSER_CONSOLE]')
         || (bool) preg_match('/\[BROWSER\][^\n]*browser_/', $raw);
 
+    $shellBootstrap403 = ((int) ($agg['browser_fetch_403_count'] ?? 0) > 0
+            || (int) ($agg['browser_shell_watchdog_forbidden_count'] ?? 0) > 0)
+        || str_contains($raw, 'SHELL_SSE_AND_SESSION_INFO_403')
+        || str_contains($raw, 'shell_bootstrap_forbidden_ingested');
+
     return [
         'shell_path_signal' => $shellDomain,
+        'shell_bootstrap_forbidden_signal' => $shellBootstrap403,
         'application_path_signal' => $promoDomain,
         'relay_transport_signal' => $relayDomain,
         'browser_console_capture_signal' => $consoleDomain,
@@ -2850,7 +2897,11 @@ function ipmiKvmBugHistorySummarizeRegressionPatterns(): array
                 'relay_request_count' => (int) ($agg['relay_request_count'] ?? 0),
                 'browser_ws_failed_connect_count' => (int) ($agg['browser_ws_failed_connect_count'] ?? 0),
                 'browser_console_error_count' => (int) ($agg['browser_console_error_count'] ?? 0),
+                'browser_fetch_403_count' => (int) ($agg['browser_fetch_403_count'] ?? 0),
+                'browser_shell_watchdog_forbidden_count' => (int) ($agg['browser_shell_watchdog_forbidden_count'] ?? 0),
                 'sustained_frame_flow_observed' => !empty($agg['sustained_frame_flow_observed']),
+                'upstream_ws_ok' => !empty($agg['upstream_ws_ok']),
+                'shell_bootstrap_forbidden_signal' => !empty($modes['shell_bootstrap_forbidden_signal']),
             ],
         ];
         $reason = strtolower(trim((string) ($fin['final_failure_reason'] ?? '')));
@@ -2864,21 +2915,27 @@ function ipmiKvmBugHistorySummarizeRegressionPatterns(): array
     }
     $primary = ipmiKvmBugHistoryPrimaryReferenceIndex();
     $primaryRel = ipmiKvmBugHistoryPrimaryReferenceRel();
+    $explicit5Exists = is_file(ipmiKvmBugFilePathForIndex(5));
     $explicit4Exists = is_file(ipmiKvmBugFilePathForIndex(4));
-    $designatedIdx = 4;
+    $designatedIdx = 5;
     $designatedRel = ipmiKvmBugFileRelForIndex($designatedIdx);
-    $designatedRaw = $explicit4Exists ? ipmiKvmBugHistoryLoad($designatedRel) : null;
+    $designatedRaw = $explicit5Exists ? ipmiKvmBugHistoryLoad($designatedRel) : null;
+    $historicalBugs4Raw = $explicit4Exists ? ipmiKvmBugHistoryLoad(ipmiKvmBugFileRelForIndex(4)) : null;
 
     return [
         'run_count' => count($runs),
         'primary_reference_index' => $primary,
         'primary_reference_rel' => $primaryRel,
-        'primary_reference_explanation' => 'On disk, the latest preserved run is the highest bugsN.txt index (same as a deployment where bugs4.txt is current when N=4 is max).',
+        'primary_reference_explanation' => 'On disk, the latest preserved run is the highest bugsN.txt index (e.g. bugs6.txt when N=6 is max).',
         'designated_human_reference_index' => $designatedIdx,
         'designated_human_reference_rel' => $designatedRel,
-        'designated_human_reference_note' => 'Client regression review treats bugs/bugs4.txt as the main written reference when present; compare with primary_reference_* when newer runs exist (bugs5+).',
+        'designated_human_reference_note' => 'Client regression review treats bugs/bugs5.txt as the main written reference when present; older runs (bugs1–bugs4) are history only.',
         'designated_human_reference_loaded' => $designatedRaw !== null,
         'designated_human_reference_final_snapshot' => $designatedRaw !== null ? ipmiKvmBugHistoryParseFinalSnapshot($designatedRaw) : [],
+        'historical_bugs4_reference_loaded' => $historicalBugs4Raw !== null,
+        'historical_bugs4_final_snapshot' => $historicalBugs4Raw !== null ? ipmiKvmBugHistoryParseFinalSnapshot($historicalBugs4Raw) : [],
+        'explicit_bugs5_txt_present' => $explicit5Exists,
+        'bugs5_matches_primary_reference' => $primary === 5 && $explicit5Exists,
         'explicit_bugs4_txt_present' => $explicit4Exists,
         'bugs4_matches_primary_reference' => $primary === 4 && $explicit4Exists,
         'runs_chronological' => $runs,
