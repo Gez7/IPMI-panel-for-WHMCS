@@ -220,7 +220,8 @@ function ipmiProxyBuildFallbackSessionPlan(array $plan, array $session): array
 
 function ipmiProxyCanUseNoVncFallback(): bool
 {
-    $p = realpath(__DIR__ . '/novnc/vnc_lite.html');
+    // novnc/ lives at the project root (two levels above lib/ipmi_proxy/)
+    $p = realpath(dirname(__DIR__, 2) . '/novnc/vnc_lite.html');
 
     return $p !== false && is_file($p);
 }

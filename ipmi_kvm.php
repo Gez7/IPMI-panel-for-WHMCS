@@ -69,7 +69,13 @@ try {
         'user_facing_mode' => (string) ($launchPlan['user_facing_kvm_mode'] ?? ''),
     ]);
     if (trim((string) ($bugStart['bug_file_rel'] ?? '')) === '') {
-        throw new Exception('KVM diagnostic log could not be created (check that the bugs/ directory is writable).');
+        // Bug log directory is not writable - log the issue but do NOT abort the KVM launch.
+        // KVM console will still function; diagnostic logging is simply unavailable.
+        error_log('ipmi_kvm: KVM diagnostic log could not be created (bugs/ directory may not be writable). KVM launch continues without logging.');
+        // Set minimal stub values so downstream code that reads buglog fields does not crash.
+        $bugStart['run_id']         = bin2hex(random_bytes(8));
+        $bugStart['bug_file_rel']   = '';
+        $bugStart['bug_file_index'] = 0;
     }
     $runId = (string) ($bugStart['run_id'] ?? '');
     $runStartTs = time();

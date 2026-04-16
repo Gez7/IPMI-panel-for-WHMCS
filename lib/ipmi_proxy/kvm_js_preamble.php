@@ -30,7 +30,8 @@ function ipmiProxyBuildKvmAutoLaunchPreambleJs(string $familyJs, string $planJs,
         . 'if(!ctx||!ctx.open||ctx.__ipmi_kvm_open_patched)return;'
         . 'var ow=ctx.open.bind(ctx);'
         . 'ctx.open=function(u,n,f){try{if(typeof u==="string"&&u!==""){ctx.location.href=u;return ctx;}}catch(_e0){}return ow(u,n,f);};'
+        . 'try{ctx.open.prototype=ow.prototype;}catch(_ep){}'
         . 'ctx.__ipmi_kvm_open_patched=true;'
-        . '}catch(e){}}';
+        . '}catch(e){}}' ;
 
 }

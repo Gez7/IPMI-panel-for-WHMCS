@@ -239,8 +239,18 @@ function ipmiProxyValidateGeneratedIloJs(string $fullPatchJs): array
             $out['reason'] = $n['reason'];
         }
     }
-    if ($out['ok'] && stripos($fullPatchJs, 'function tryClickIloDiscoveryLaunch') !== false) {
-        if (preg_match('/catch\s*\(\s*_q\s*\)\s*\{\s*\}\s*return""\s*;\s*\}\s*function\s+collectContexts\s*\(/', $fullPatchJs) !== 1) {
+        if ($out['ok'] && stripos($fullPatchJs, 'function tryClickIloDiscoveryLaunch') !== false) {
+        // Verify tryClickIloDiscoveryLaunch ends correctly and collectContexts follows.
+        // Flexible pattern handles whitespace variations in PHP string concatenation.
+        $tailOk = preg_match(
+            '/catch\s*\(\s*_q\s*\)\s*\{\s*\}\s*return\s*""\s*;\s*\}\s*function\s+collectContexts\s*\(/',
+            $fullPatchJs
+        ) === 1;
+        if (!$tailOk) {
+            $out['ok'] = false;
+            $out['reason'] = 'tryClickIloDiscoveryLaunch_tail_pattern_mismatch';
+        }
+    }\s*function\s+collectContexts\s*\(/', $fullPatchJs) !== 1) {
             $out['ok'] = false;
             $out['reason'] = 'tryClickIloDiscoveryLaunch_tail_pattern_mismatch';
         }

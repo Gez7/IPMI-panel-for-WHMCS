@@ -66,8 +66,6 @@ function ipmiProxyInjectIloHeadFixes(string $html, string $token, ?string $redfi
     $pxJs = json_encode($px, JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_UNESCAPED_SLASHES);
     $wsRelay = '/ipmi_ws_relay.php?token=' . rawurlencode($token) . '&target=';
     $wsRelayJs = json_encode($wsRelay, JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_UNESCAPED_SLASHES);
-    $wsRelay = '/ipmi_ws_relay.php?token=' . rawurlencode($token) . '&target=';
-    $wsRelayJs = json_encode($wsRelay, JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_UNESCAPED_SLASHES);
     $xTok = $redfishXAuthToken !== null ? trim($redfishXAuthToken) : '';
     $xJs = json_encode($xTok, JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
 

@@ -96,7 +96,7 @@ function ipmiProxyRewriteWebSocketUrls(string $body, string $bmcHost, string $to
             $out = $tmp;
         }
     }
-    // Template literals: `wss://${host}/path` — rewrite when host token matches BMC (minified bundles).
+    // Template literals: `wss://${host}/path` ï¿½ rewrite when host token matches BMC (minified bundles).
     $tplCb = static function (array $m) use ($bmcHost, $token): string {
         $scheme = strtolower($m[1]);
         $rest = (string) ($m[2] ?? '');
@@ -259,8 +259,6 @@ function ipmiProxyInjectIloHeadFixes(string $html, string $token, ?string $redfi
 
     $px = '/ipmi_proxy.php/' . rawurlencode($token);
     $pxJs = json_encode($px, JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_UNESCAPED_SLASHES);
-    $wsRelay = '/ipmi_ws_relay.php?token=' . rawurlencode($token) . '&target=';
-    $wsRelayJs = json_encode($wsRelay, JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_UNESCAPED_SLASHES);
     $wsRelay = '/ipmi_ws_relay.php?token=' . rawurlencode($token) . '&target=';
     $wsRelayJs = json_encode($wsRelay, JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_UNESCAPED_SLASHES);
     $xTok = $redfishXAuthToken !== null ? trim($redfishXAuthToken) : '';
@@ -539,7 +537,7 @@ function ipmiProxyBuildKvmAutoLaunchPreambleJs(string $familyJs, string $planJs,
         . 'function forceSameTabOpen(ctx){try{'
         . 'if(!ctx||!ctx.open||ctx.__ipmi_kvm_open_patched)return;'
         . 'var ow=ctx.open.bind(ctx);'
-        . 'ctx.open=function(u,n,f){try{if(typeof u==="string"&&u!==""){ctx.location.href=u;return ctx;}}catch(_e0){}return ow(u,n,f);};'
+        . 'ctx.open=function(u,n,f){try{if(typeof u==="string"&&u!==""){ctx.location.href=u;return ctx;}}catch(_e0){}return ow(u,n,f);};try{ctx.open.prototype=ow.prototype;}catch(_ep){}'
         . 'ctx.__ipmi_kvm_open_patched=true;'
         . '}catch(e){}}';
 }
@@ -1003,7 +1001,7 @@ function ipmiProxyBuildKvmRuntimeProgressHelpersJs(): string
         . 'try{sock.addEventListener("error",function(){try{ipmiKvmWsBump("__ipmi_kvm_ws_handshake_failed",1);var ne=ipmiKvmBrowserSocketNormalizeUrl(urlStr);_kvmDbg("ipmi_ws_relay_handshake_error",{attempt_id:attemptId,fail_count:window.__ipmi_kvm_ws_handshake_failed||1});try{kvmBugSend("BROWSER","browser_ws_error",{attempt_id:attemptId,phase:"error",relay_url_norm:ne.relay_url_norm,target_host_masked:ne.target_host_masked});}catch(_e1){}try{_kvmConEmit("error","browser_ws_error",{attempt_id:attemptId,phase:"error",relay_url_norm:ne.relay_url_norm});}catch(_e1b){}try{kvmBugSend("TRANSPORT","browser_ws_handshake_failed_event",{attempt_id:attemptId,fail_count:window.__ipmi_kvm_ws_handshake_failed||1});}catch(_e2){}}catch(_e){}});}catch(_el){}'
         . 'try{sock.addEventListener("close",function(ev){try{var code=ev?ev.code||0:0;var clean=!!(ev&&ev.wasClean);window.__ipmi_kvm_ws_close_code=code;window.__ipmi_kvm_ws_close_clean=clean;var nc=ipmiKvmBrowserSocketNormalizeUrl(urlStr);_kvmDbg("ipmi_ws_relay_closed",{code:code,attempt_id:attemptId});try{kvmBugSend("BROWSER","browser_ws_close",{attempt_id:attemptId,code:code,clean:clean?1:0,opened:opened?1:0,relay_url_norm:nc.relay_url_norm});}catch(_c1){}try{_kvmConEmit("warn","browser_ws_close",{attempt_id:attemptId,code:code,clean:clean?1:0,opened:opened?1:0,relay_url_norm:nc.relay_url_norm});}catch(_c1b){}if(!opened){try{kvmBugSend("BROWSER","browser_ws_failed_connect",{attempt_id:attemptId,phase:"close_before_open",code:code,clean:clean?1:0,relay_url_norm:nc.relay_url_norm});}catch(_c2){}try{_kvmConEmit("error","browser_ws_failed_connect",{attempt_id:attemptId,phase:"close_before_open",code:code,clean:clean?1:0,relay_url_norm:nc.relay_url_norm});}catch(_c2b){}}try{kvmBugSend("TRANSPORT","browser_ws_closed",{attempt_id:attemptId,code:code,clean:clean?1:0});}catch(_c3){}}catch(_cl){}});}catch(_cll){}'
         . 'try{sock.addEventListener("message",function(){try{window.__ipmi_kvm_ws_last_msg_ts=kvmNow();ipmiKvmWsBump("__ipmi_kvm_ws_frame_count",1);if(ipmiKvmWsTop().__ipmi_kvm_ws_frame_count===1){window.__ipmi_kvm_ws_first_frame_ts=kvmNow();_kvmDbg("ipmi_ws_relay_first_frame",{attempt_id:attemptId});try{kvmBugSend("TRANSPORT","browser_ws_first_application_frame",{attempt_id:attemptId});}catch(_m1){}}}catch(_m){}});}catch(_ml){}'
-        . 'return sock;};try{w.WebSocket.prototype=W0.prototype;}catch(_wp){}'
+        . 'return sock;};try{w.WebSocket.prototype=W0.prototype;}catch(_wp){}try{var _wsk=["CONNECTING","OPEN","CLOSING","CLOSED"];for(var _wi=0;_wi<_wsk.length;_wi++){if(W0[_wsk[_wi]]!==undefined)w.WebSocket[_wsk[_wi]]=W0[_wsk[_wi]];}}catch(_wse){}'
         . '}catch(e3){}}'
         . 'function kvmHookWsRelayProbe(){kvmHookWsRelayOnWindow(window);}'
         . 'kvmHookWsRelayProbe();'
@@ -1482,8 +1480,14 @@ function ipmiProxyValidateGeneratedIloJs(string $fullPatchJs): array
             $out['reason'] = $n['reason'];
         }
     }
-    if ($out['ok'] && stripos($fullPatchJs, 'function tryClickIloDiscoveryLaunch') !== false) {
-        if (preg_match('/catch\s*\(\s*_q\s*\)\s*\{\s*\}\s*return""\s*;\s*\}\s*function\s+collectContexts\s*\(/', $fullPatchJs) !== 1) {
+        if ($out['ok'] && stripos($fullPatchJs, 'function tryClickIloDiscoveryLaunch') !== false) {
+        // Verify tryClickIloDiscoveryLaunch ends correctly and collectContexts follows it.
+        // Flexible pattern tolerates whitespace variations in PHP string concatenation.
+        $tailOk = preg_match(
+            '/catch\s*\(\s*_q\s*\)\s*\{\s*\}\s*return\s*""\s*;\s*\}\s*function\s+collectContexts\s*\(/',
+            $fullPatchJs
+        ) === 1;
+        if (!$tailOk) {
             $out['ok'] = false;
             $out['reason'] = 'tryClickIloDiscoveryLaunch_tail_pattern_mismatch';
         }
@@ -1880,7 +1884,7 @@ function ipmiProxyIloHelperContributesToLaunch(string $pageType): bool
 }
 
 /**
- * When true, helper-side “healthy” hints must not flip aggregate success (caller enforces in FINAL / readiness).
+ * When true, helper-side ï¿½healthyï¿½ hints must not flip aggregate success (caller enforces in FINAL / readiness).
  */
 function ipmiProxyIloHelperCannotOverrideFailure(bool $transportHealthy, bool $applicationPromotionCommitted): bool
 {
@@ -2532,7 +2536,7 @@ function ipmiProxyDetermineFinalUserFacingKvmMode(array $plan): string
 }
 
 /**
- * Non-blocking banner: session is panel-proxied (Tier B) — native console not strongly confirmed yet.
+ * Non-blocking banner: session is panel-proxied (Tier B) ï¿½ native console not strongly confirmed yet.
  */
 function ipmiProxyInjectKvmPanelControlledBanner(string $html): string
 {
@@ -2624,7 +2628,7 @@ function ipmiProxyRewriteBmcResponseBody(string $body, string $bmcIp, string $to
         }
     }
 
-    // Root-relative rewrites: do NOT key off '"/js/' for JS bundles — jquery.min.js often contains that
+    // Root-relative rewrites: do NOT key off '"/js/' for JS bundles ï¿½ jquery.min.js often contains that
     // substring. iLO HTML pages are small: always rewrite root-relative paths when vendor is iLO.
     // Supermicro/ASRockRack also depend on root-relative /cgi/ and /res/ assets.
     $typeNorm = ipmiWebNormalizeBmcType((string) $bmcType);
@@ -3313,7 +3317,7 @@ function ipmiProxyIsIloEventStreamPath(string $bmcPath): bool
 }
 
 /**
- * Named HTML fragments (legacy allowlist — broader detection uses heuristics + context).
+ * Named HTML fragments (legacy allowlist ï¿½ broader detection uses heuristics + context).
  */
 function ipmiProxyIloRuntimeFragmentPathNamed(string $bmcPath): bool
 {
@@ -3336,7 +3340,7 @@ function ipmiProxyIloRuntimeFragmentPathNamed(string $bmcPath): bool
 }
 
 /**
- * Full application / heavy HTML pages — never treat as small bootstrap fragments.
+ * Full application / heavy HTML pages ï¿½ never treat as small bootstrap fragments.
  */
 function ipmiProxyIloHtmlFragmentPathStrictExclude(string $pLower): bool
 {
@@ -3832,7 +3836,7 @@ function ipmiProxyIloCanUpgradeToStrongConfirmation(array $confirmation): bool
 }
 
 /**
- * Read capability blob only (feature existence — not per-attempt confirmation).
+ * Read capability blob only (feature existence ï¿½ not per-attempt confirmation).
  *
  * @param array<string, mixed> $session
  * @return array<string, mixed>
@@ -4195,7 +4199,7 @@ function ipmiProxyIloFinalizeReadinessFromDiscovery(array $readiness, array $dis
 }
 
 /**
- * Promote a narrow set of transport-shaped /html routes when native HTML5 is already proven — not bootstrap-critical.
+ * Promote a narrow set of transport-shaped /html routes when native HTML5 is already proven ï¿½ not bootstrap-critical.
  *
  * @param array<string, mixed> $final role row from ipmiProxyClassifyIloPathRole + contextualize
  * @param array<string, mixed> $bootstrapState
@@ -4536,7 +4540,7 @@ function ipmiProxyIsIloBootstrapPath(string $bmcPath): bool
 }
 
 /**
- * Paths where a failed transport or 401/403/502 likely indicates stale iLO session — safe to try one auth refresh + retry.
+ * Paths where a failed transport or 401/403/502 likely indicates stale iLO session ï¿½ safe to try one auth refresh + retry.
  */
 function ipmiProxyIsIloRecoverableRuntimePath(string $bmcPath): bool
 {
@@ -7146,7 +7150,7 @@ function ipmiProxyTryEmitStaticFallback(string $bmcPath): bool
 }
 
 /**
- * Stream SSE or long-poll JSON from the BMC. Aborts before sending bytes if status is 401/403/502/503 (502/503: recoverable upstream — proxy may refresh auth and retry once).
+ * Stream SSE or long-poll JSON from the BMC. Aborts before sending bytes if status is 401/403/502/503 (502/503: recoverable upstream ï¿½ proxy may refresh auth and retry once).
  *
  * @return array{ok: bool, auth_rejected: bool, applied_resolve: bool, curl_errno?: int, curl_error?: string, sse_recoverable_http?: bool, sse_recover_http_code?: int}
  */

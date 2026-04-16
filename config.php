@@ -20,6 +20,12 @@ if (!defined('ENCRYPTION_KEY')) {
   define('ENCRYPTION_KEY', 'YOUR_GENERATED_64_CHARACTER_HEX_STRING_HERE');
 }
 
+// Guard: warn loudly if the default placeholder key is still in use.
+if (defined('ENCRYPTION_KEY') && ENCRYPTION_KEY === 'YOUR_GENERATED_64_CHARACTER_HEX_STRING_HERE') {
+  error_log('IPMI Panel WARNING: ENCRYPTION_KEY is still set to the default placeholder. '
+    . 'Generate a real key with: php -r "echo bin2hex(random_bytes(32));" and set it in config.php');
+}
+
 /** Set true (or env IPMI_PROXY_DEBUG=1) to log proxy decisions; tokens/cookies redacted in logs. */
 if (!defined('IPMI_PROXY_DEBUG')) {
     define('IPMI_PROXY_DEBUG', false);
